@@ -96,7 +96,7 @@ ggplot(data_all, aes(x = Index, y = Harga, color = status, group = 1)) +
   theme_bw() +
   theme(legend.position = "bottom")
 ```
-# Pemulusan
+#  Pemulusan
 ## Single Moving Average (SMA)
 ```{r}
 data.sma<-SMA(train.ts, n=4)
