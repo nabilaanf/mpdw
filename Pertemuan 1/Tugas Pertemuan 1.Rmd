@@ -11,227 +11,690 @@ output:
     number_sections: true
 ---
 
-# Packages
+# Library/Packages
 ```{r}
-library(TTR)
-library(ggplot2)
-library(knitr)
-library(readxl)
 library(forecast)
 library(graphics)
+library(TTR)
 library(TSA)
 library(rio)
+library(ggplot2)
+library(dplyr)
+library(stats)
 ```
 
-# Baca Data
+# Impor Data
 ```{r}
-KOLOM_TANGGAL<-"Date" 
-KOLOM_NILAI<-"Harga Rp/g"
-FREKUENSI_MUSIMAN <- 12
-ORDE_MIN<-3
-ORDE_MAKS<-14
+data<- import("https://raw.githubusercontent.com/nabilaanf/mpdw/refs/heads/main/Pertemuan%201/Gugus%20Data%20yang%20Dipakai_XAU_IDR%20Historical%20Data.xlsx")
 
-data_mentah <- import("https://raw.githubusercontent.com/nabilaanf/mpdw/refs/heads/main/Pertemuan%201/Gugus%20Data%20yang%20Dipakai_XAU_IDR%20Historical%20Data.xlsx")
-
-ringkasan_kolom <- function(df) {
-  data.frame(
-    kolom      = names(df),
-    kelas      = sapply(df, function(x) class(x)[1]),
-    n_missing  = sapply(df, function(x) sum(is.na(x))),
-    n_unique   = sapply(df, function(x) length(unique(x))),
-    min        = sapply(df, function(x) if (is.numeric(x)) suppressWarnings(min(x, na.rm = TRUE)) else NA),
-    maks       = sapply(df, function(x) if (is.numeric(x)) suppressWarnings(max(x, na.rm = TRUE)) else NA),
-    row.names  = NULL
-  )
-}
-kable(ringkasan_kolom(data_mentah),
-      caption = "Ringkasan kolom data")
-
-
-if (!is.null(KOLOM_TANGGAL) && !is.na(KOLOM_TANGGAL)) {
-  data_mentah[[KOLOM_TANGGAL]] <- as.Date(data_mentah[[KOLOM_TANGGAL]], format = "%m/%d/%Y")
-  data_mentah <- data_mentah[order(data_mentah[[KOLOM_TANGGAL]]), ]
-  waktu <- data_mentah[[KOLOM_TANGGAL]]
-} else {
-  waktu <- seq_len(nrow(data_mentah))
-}
-
-
-y <- as.numeric(gsub(",", "", data_mentah[[KOLOM_NILAI]]))
-n <- length(y)
-
-cat("  - Jumlah data (n):", n, "\n")
-cat("  - Rentang data:", if (!is.null(KOLOM_TANGGAL)) paste(min(waktu), "sampai", max(waktu)) else paste("Periode 1 s.d.", n), "\n")
-cat("  - Min value:", min(y), "\n")
-cat("  - Max value:", max(y), "\n")
+data$Date<-as.Date(data$Date, format="%m/%d/%Y")
+data<-data[order(data$Date),]
+data
 ```
 
 # Eksplorasi Data
-```{r plot-eksplorasi, fig.width=9, fig.height=4}
-ggplot(data.frame(waktu = waktu, nilai = y), aes(x = waktu, y = nilai)) +
-  geom_line(color = "black") +
-  labs(x = if (!is.null(KOLOM_TANGGAL) && !is.na(KOLOM_TANGGAL)) "Tanggal" else "Periode ke-",
-       y = KOLOM_NILAI,
-       title = paste("Deret waktu:", KOLOM_NILAI)) +
-  theme_minimal()
-```
-
-# Metode Pemulusan
 ```{r}
-hitung_metrik <- function(aktual, ramalan) {
-  sisa <- aktual - ramalan
-  valid <- !is.na(sisa)
-  sse <- sum(sisa[valid]^2)
-  mse <- mean(sisa[valid]^2)
-  rmse <- sqrt(mse)
-  idx_mape <- valid & aktual != 0
-  mape <- mean(abs(sisa[idx_mape] / aktual[idx_mape])) * 100
-  c(SSE = sse, MSE = mse, RMSE = rmse, MAPE = mape, n_valid = sum(valid))
-}
+View(data)
+str(data)
+dim(data)
+```
+```{r}
+data.ts<-ts(data$`Harga Rp/g`)
+summary(data.ts)
 ```
 
+```{r}
+ts.plot(data.ts, xlab="Periode Waktu", ylab="Harga Emas (Rp/g)", 
+        main = "Time Series Plot")
+points(data.ts)
+```
+# Pembagian Data
+```{r}
+n <- nrow(data)
+n_train <- floor(0.8 * n)
+
+training <- data[1:n_train, ]
+testing  <- data[(n_train + 1):n, ]
+
+train.ts <- ts(training$`Harga Rp/g`)
+test.ts  <- ts(testing$`Harga Rp/g`)
+
+cat("Training :", length(train.ts), "data\n")
+cat("Testing  :", length(test.ts), "data\n")
+```
+## Eksplorasi Data Latih dan Data Uji
+```{r}
+plot(data.ts, col="red",main="Plot semua data")
+points(data.ts)
+
+plot(train.ts, col="blue",main="Plot data latih")
+points(train.ts)
+
+plot(test.ts, col="blue",main="Plot data uji")
+points(test.ts)
+```
+
+```{r}
+train_df <- data.frame(
+  Index = 1:length(train.ts),
+  Harga = as.numeric(train.ts),
+  status = "Data Latih"
+)
+
+test_df <- data.frame(
+  Index = (length(train.ts) + 1):(length(train.ts) + length(test.ts)),
+  Harga = as.numeric(test.ts),
+  status = "Data Uji"
+)
+
+data_all <- rbind(train_df, test_df)
+
+ggplot(data_all, aes(x = Index, y = Harga, color = status, group = 1)) +
+  geom_line(size = 0.8) +
+  labs(x = "Periode Waktu (Indeks)", y = "Harga Emas (Rp/g)", color = "Keterangan") +
+  scale_color_manual(values = c("Data Latih" = "blue", "Data Uji" = "red")) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+# Pemulusan
 ## Single Moving Average (SMA)
 ```{r}
-sma_ramalan <- function(y, m) {
-  s <- SMA(y, n = m)
-  c(NA, s[-length(s)])
-}
-
-orde_uji <- ORDE_MIN:ORDE_MAKS
-sma_rmse <- sapply(orde_uji, function(m) hitung_metrik(y, sma_ramalan(y, m))["RMSE"])
-m_sma <- orde_uji[which.min(sma_rmse)]
-
-fit_sma <- sma_ramalan(y, m_sma)
-metrik_sma <- hitung_metrik(y, fit_sma)
-cat("Orde m terpilih:", m_sma, "\n")
-print(round(metrik_sma, 3))
+data.sma<-SMA(train.ts, n=4)
+data.sma
 ```
+
+```{r}
+data.ramal<-c(NA,data.sma)
+data.ramal 
+```
+
+```{r}
+n_test<-length(test.ts)
+data.gab<-cbind(
+  aktual=c(data.ts),
+  pemulusan=c(data.sma,rep(NA,n_test)),
+  ramalan=c(data.ramal,rep(data.ramal[length(data.ramal)],41)))
+
+data.gab
+```
+
+```{r}
+ts.plot(data.ts, xlab="Time Period ", ylab="Harga Emas (Rp/g)", main= "SMA N=4 Data Harga Emas")
+points(data.ts)
+lines(data.gab[,2],col="green",lwd=2)
+lines(data.gab[,3],col="red",lwd=2)
+legend("topleft",c("data aktual","data pemulusan","data peramalan"), lty=8, col=c("black","green","red"), cex=0.5)
+```
+
+### Akurasi Data Latih
+
+```{r}
+error_train.sma <- train.ts - data.ramal[1:length(train.ts)]
+idx_sma <- 5:length(train.ts)  
+
+SSE_train.sma <- sum(error_train.sma[idx_sma]^2)
+MSE_train.sma <- mean(error_train.sma[idx_sma]^2)
+MAPE_train.sma <- mean(abs((error_train.sma[idx_sma] / train.ts[idx_sma]) * 100))
+
+akurasi_train.sma <- matrix(c(SSE_train.sma, MSE_train.sma, MAPE_train.sma))
+row.names(akurasi_train.sma) <- c("SSE", "MSE", "MAPE")
+colnames(akurasi_train.sma) <- c("Akurasi m = 4")
+akurasi_train.sma
+```
+### Akurasi Data Uji
+```{r}
+ramalan_test.sma <- data.gab[(n_train + 1):n, 3]  
+error_test.sma <- test.ts - ramalan_test.sma
+
+SSE_test.sma <- sum(error_test.sma^2)
+MSE_test.sma <- mean(error_test.sma^2)
+MAPE_test.sma <- mean(abs((error_test.sma / test.ts) * 100))
+
+akurasi_test.sma <- matrix(c(SSE_test.sma, MSE_test.sma, MAPE_test.sma))
+row.names(akurasi_test.sma) <- c("SSE", "MSE", "MAPE")
+colnames(akurasi_test.sma) <- c("Akurasi m = 4")
+akurasi_test.sma
+```
+
 
 ## Double Moving Average (DMA)
 ```{r}
-dma_ramalan <- function(y, m) {
-  s1 <- SMA(y, n = m)
-  s2 <- SMA(s1, n = m)
-  at <- 2 * s1 - s2
-  bt <- (2 / (m - 1)) * (s1 - s2)
-  f1 <- at + bt
-  c(NA, f1[-length(f1)])
-}
+n_test <- length(test.ts)
 
-dma_rmse <- sapply(orde_uji, function(m) hitung_metrik(y, dma_ramalan(y, m))["RMSE"])
-m_dma <- orde_uji[which.min(dma_rmse)]
+data.sma <- SMA(train.ts, n = 4)      
+data.dma <- SMA(data.sma, n = 4)      
+At <- 2 * data.sma - data.dma
+Bt <- (2 / (4 - 1)) * (data.sma - data.dma)
 
-fit_dma <- dma_ramalan(y, m_dma)
-metrik_dma <- hitung_metrik(y, fit_dma)
-cat("Orde m terpilih:", m_dma, "\n")
-print(round(metrik_dma, 3))
-```
+data.pemulusan <- At + Bt
 
-## Single Exponential Smoothing (SES)
-```{r}
-ses_ramalan <- function(y, alpha) {
-  n <- length(y)
-  s <- numeric(n)
-  s[1] <- y[1]
-  for (t in 2:n) s[t] <- alpha * y[t] + (1 - alpha) * s[t - 1]
-  c(NA, s[-n])
-}
+data.ramal <- c(NA, data.pemulusan)
 
-alpha_uji <- seq(0.01, 0.99, by = 0.01)
-ses_rmse <- sapply(alpha_uji, function(a) hitung_metrik(y, ses_ramalan(y, a))["RMSE"])
-alpha_ses <- alpha_uji[which.min(ses_rmse)]
+f <- At[length(At)] + Bt[length(Bt)] * (1:(n_test-1))
 
-fit_ses <- ses_ramalan(y, alpha_ses)
-metrik_ses <- hitung_metrik(y, fit_ses)
-cat("Alpha terpilih:", alpha_ses, "\n")
-print(round(metrik_ses, 3))
-```
-
-## Double Exponential Smoothing (DES, metode satu parameter Brown)
-```{r}
-des_ramalan <- function(y, alpha) {
-  n <- length(y)
-  s1 <- numeric(n); s2 <- numeric(n)
-  s1[1] <- y[1]; s2[1] <- y[1]
-  for (t in 2:n) {
-    s1[t] <- alpha * y[t] + (1 - alpha) * s1[t - 1]
-    s2[t] <- alpha * s1[t] + (1 - alpha) * s2[t - 1]
-  }
-  at <- 2 * s1 - s2
-  bt <- (alpha / (1 - alpha)) * (s1 - s2)
-  f1 <- at + bt
-  c(NA, f1[-n])
-}
-
-des_rmse <- sapply(alpha_uji, function(a) hitung_metrik(y, des_ramalan(y, a))["RMSE"])
-alpha_des <- alpha_uji[which.min(des_rmse)]
-
-fit_des <- des_ramalan(y, alpha_des)
-metrik_des <- hitung_metrik(y, fit_des)
-cat("Alpha terpilih:", alpha_des, "\n")
-print(round(metrik_des, 3))
-```
-
-## Holt-Winters
-```{r}
-hw_fit <- tryCatch({
-  if (FREKUENSI_MUSIMAN > 1) {
-    HoltWinters(ts(y, frequency = FREKUENSI_MUSIMAN))
-  } else {
-    HoltWinters(ts(y), gamma = FALSE)
-  }
-}, error = function(e) {
-  message("Holt-Winters musiman gagal konvergen, pakai Holt tanpa musiman. Pesan: ", conditionMessage(e))
-  HoltWinters(ts(y), gamma = FALSE)
-})
-
-hw_fitted <- as.numeric(hw_fit$fitted[, "xhat"])
-aktual_hw <- y[(n - length(hw_fitted) + 1):n]
-metrik_hw <- hitung_metrik(aktual_hw, hw_fitted)
-
-beta_hw  <- if (is.logical(hw_fit$beta)) 0 else hw_fit$beta
-gamma_hw <- if (is.logical(hw_fit$gamma)) 0 else hw_fit$gamma
-
-cat("alpha =", round(hw_fit$alpha, 3), " beta =", round(beta_hw, 3),
-    " gamma =", round(gamma_hw, 3), "\n")
-print(round(metrik_hw, 3))
-```
-
-# Perbandingan Kinerja Metode
-```{r}
-tabel <- rbind(
-  SMA          = metrik_sma,
-  DMA          = metrik_dma,
-  SES          = metrik_ses,
-  DES          = metrik_des,
-  Holt_Winters = metrik_hw
+data.gab.dma <- cbind(
+  aktual = c(data.ts),
+  pemulusan = c(data.pemulusan, rep(NA, n_test)),
+  ramalan = c(data.ramal, f)
 )
-tabel <- round(tabel[, c("SSE", "MSE", "RMSE", "MAPE")], 3)
-kable(tabel, caption = "Perbandingan metrik akurasi tiap metode pemulusan")
+data.gab.dma
+```
 
-nama_terbaik <- rownames(tabel)[which.min(tabel[, "MAPE"])]
+
+```{r}
+ts.plot(data.ts, xlab="Periode Waktu", ylab="Harga Emas (Rp/g)", main= "DMA N=4 Data Harga Emas")
+points(data.ts)
+lines(data.gab.dma[,2],col="green",lwd=2)
+lines(data.gab.dma[,3],col="red",lwd=2)
+legend("topleft",c("data aktual","data pemulusan","data peramalan"), lty=8, col=c("black","green","red"), cex=0.6)
+```
+
+### Akurasi Data Latih
+```{r}
+error_train.dma <- as.numeric(train.ts) - data.ramal[1:length(train.ts)]
+
+idx_dma <- 8:length(train.ts)
+
+SSE_train.dma <- sum(error_train.dma[idx_dma]^2, na.rm = TRUE)
+MSE_train.dma <- mean(error_train.dma[idx_dma]^2, na.rm = TRUE)
+MAPE_train.dma <- mean(abs((error_train.dma[idx_dma] / as.numeric(train.ts)[idx_dma]) * 100), na.rm = TRUE)
+
+akurasi_train.dma <- matrix(c(SSE_train.dma, MSE_train.dma, MAPE_train.dma))
+row.names(akurasi_train.dma) <- c("SSE", "MSE", "MAPE")
+colnames(akurasi_train.dma) <- c("Akurasi m = 4")
+akurasi_train.dma
+```
+### Akurasi Data Uji
+```{r}
+ramalan_test.dma <- as.numeric(data.gab.dma[(n_train + 1):n, 3])
+aktual_test.dma <- as.numeric(test.ts)
+
+error_test.dma <- aktual_test.dma - ramalan_test.dma
+
+SSE_test.dma <- sum(error_test.dma^2, na.rm = TRUE)
+MSE_test.dma <- mean(error_test.dma^2, na.rm = TRUE)
+MAPE_test.dma <- mean(abs((error_test.dma / aktual_test.dma) * 100), na.rm = TRUE)
+
+akurasi_test.dma <- matrix(c(SSE_test.dma, MSE_test.dma, MAPE_test.dma))
+row.names(akurasi_test.dma) <- c("SSE", "MSE", "MAPE")
+colnames(akurasi_test.dma) <- c("Akurasi m = 4")
+akurasi_test.dma
+```
+
+## Single Exponential Smoothing
+
+```{r}
+ses1 <- ses(train.ts, h = 42, alpha = 0.2)
+plot(ses1)
+ses1
 ```
 
 ```{r}
-fit_list <- list(SMA = fit_sma, DMA = fit_dma, SES = fit_ses,
-                  DES = fit_des, Holt_Winters = c(rep(NA, n - length(hw_fitted)), hw_fitted))
-fit_terbaik <- fit_list[[nama_terbaik]]
+autoplot(ses1) +
+  autolayer(fitted(ses1), series="Fitted") +
+  ylab("Harga Emas") + xlab("Periode")
+```
 
-ggplot(data.frame(waktu = waktu, aktual = y, ramalan = fit_terbaik), aes(x = waktu)) +
-  geom_line(aes(y = aktual), color = "black") +
-  geom_line(aes(y = ramalan), color = "grey40", linetype = "dashed") +
-  labs(x = if (!is.null(KOLOM_TANGGAL) && !is.na(KOLOM_TANGGAL)) "Tanggal" else "Periode ke-",
-       y = KOLOM_NILAI,
-       title = paste("Data aktual (garis penuh) vs metode terbaik:", nama_terbaik, "(garis putus-putus)")) +
-  theme_minimal()
+
+```{r}
+ses2<- HoltWinters(train.ts, gamma = FALSE, beta = FALSE, alpha = 0.5)
+plot(ses2)
+
+ramalan<- forecast(ses2, h=42)
+ramalan
+```
+
+
+```{r}
+ses.opt <- ses(train.ts, h = 42, alpha = NULL)
+plot(ses.opt)
+ses.opt
+
+HWopt<- HoltWinters(train.ts, gamma = FALSE, beta = FALSE,alpha = NULL)
+HWopt
+plot(HWopt)
+
+ramalanopt<- forecast(HWopt, h=42)
+ramalanopt
+```
+
+
+### Akurasi Data Latih (HWopt)
+```{r}
+SSE<-HWopt$SSE
+MSE<-HWopt$SSE/length(train.ts)
+RMSE<-sqrt(MSE)
+
+akurasi <- matrix(c(SSE,MSE,RMSE))
+row.names(akurasi)<- c("SSE", "MSE", "RMSE")
+colnames(akurasi) <- c("Akurasi Data Latih (HWopt)")
+akurasi
 ```
 
 ```{r}
-ada_tren <- abs(beta_hw) > 0.01
-ada_musiman <- FREKUENSI_MUSIMAN > 1 && abs(gamma_hw) > 0.01
+SSE <- HWopt$SSE
+MSE <- HWopt$SSE / length(train.ts)
+RMSE <- sqrt(MSE)
 
-cat("Ada Tren:",ada_tren, "\n")
-cat("Ada Musiman:",ada_musiman,"\n")
+fitted <- as.numeric(HWopt$fitted[, 1])[1:length(train.ts)]
+error_train <- as.numeric(train.ts) - fitted
+MAPE <- mean(abs((error_train / as.numeric(train.ts)) * 100), na.rm = TRUE)
+
+akurasi <- matrix(c(SSE, MSE, RMSE, MAPE), nrow = 4)
+row.names(akurasi) <- c("SSE", "MSE", "RMSE", "MAPE")
+colnames(akurasi) <- c("Akurasi Data Latih (HWopt)")
+akurasi
+```
+
+### Akurasi Data Uji
+
+```{r}
+ramalan_test <- as.numeric(ramalanopt$mean)
+error_test <- as.numeric(test.ts) - ramalan_test
+
+SSE_test <- sum(error_test^2, na.rm = TRUE)
+MSE_test <- mean(error_test^2, na.rm = TRUE)
+RMSE_test <- sqrt(MSE_test)
+MAPE_test <- mean(abs((error_test / as.numeric(test.ts)) * 100), na.rm = TRUE)
+
+akurasi_test <- matrix(c(SSE_test, MSE_test, RMSE_test, MAPE_test), nrow = 4)
+row.names(akurasi_test) <- c("SSE", "MSE", "RMSE", "MAPE")
+colnames(akurasi_test) <- c("Akurasi Testing (HWopt)")
+akurasi_test
+```
+
+## Double Exponential Smoothing (DES)
+```{r}
+des.1<- HoltWinters(train.ts, gamma = FALSE, beta = 0.2, alpha = 0.2)
+plot(des.1)
+
+ramalandes1<- forecast(des.1, h=42)
+ramalandes1
+
+des.2<- HoltWinters(train.ts, gamma = FALSE, beta = 0.3, alpha = 0.6)
+plot(des.2)
+
+ramalandes2<- forecast(des.2, h=42)
+ramalandes2
+```
+
+```{r}
+plot(data.ts)
+lines(des.1$fitted[,1], lty=2, col="blue")
+lines(ramalandes1$mean, col="red")
+```
+
+```{r}
+des.opt<- HoltWinters(train.ts, gamma = FALSE)
+des.opt
+plot(des.opt)
+
+ramalandesopt<- forecast(des.opt, h=42)
+ramalandesopt
+```
+
+#### Akurasi Data Latih
+
+```{r}
+ssedes.train1<-des.1$SSE
+msedes.train1<-ssedes.train1/length(train.ts)
+sisaandes1<-ramalandes1$residuals
+head(sisaandes1)
+
+mapedes.train1 <- sum(abs(sisaandes1[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.1 <- matrix(c(ssedes.train1,msedes.train1,mapedes.train1))
+row.names(akurasides.1)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.1) <- c("Akurasi lamda=0.2 dan gamma=0.2")
+akurasides.1
+
+ssedes.train2<-des.2$SSE
+msedes.train2<-ssedes.train2/length(train.ts)
+sisaandes2<-ramalandes2$residuals
+head(sisaandes2)
+
+mapedes.train2 <- sum(abs(sisaandes2[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.2 <- matrix(c(ssedes.train2,msedes.train2,mapedes.train2))
+row.names(akurasides.2)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.2) <- c("Akurasi lamda=0.6 dan gamma=0.3")
+akurasides.2
+
+ssedes.train3<-des.opt$SSE
+msedes.train3<-ssedes.train3/length(train.ts)
+sisaandes3<-ramalandesopt$residuals
+head(sisaandes3)
+
+mapedes.train3 <- sum(abs(sisaandes3[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.opt <- matrix(c(ssedes.train3,msedes.train3,mapedes.train3))
+row.names(akurasides.opt)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.opt) <- c("Akurasi DES optimum")
+akurasides.opt
+```
+
+### Akurasi Data Uji
+
+```{r}
+n_test <- length(testing$`Harga Rp/g`)
+
+des1 <- HoltWinters(train.ts, gamma = FALSE, beta = 0.2, alpha = 0.2)
+ramalandes1 <- forecast(des1, h = n_test)
+
+des2 <- HoltWinters(train.ts, gamma = FALSE, beta = 0.3, alpha = 0.6)
+ramalandes2 <- forecast(des2, h = n_test)
+
+desopt <- HoltWinters(train.ts, gamma = FALSE, alpha = NULL, beta = NULL)
+ramalandesopt <- forecast(desopt, h = n_test)
+
+selisihdes1 <- ramalandes1$mean - testing$`Harga Rp/g`
+selisihdes1
+
+SSEtestingdes1 <- sum(selisihdes1^2)
+MSEtestingdes1 <- SSEtestingdes1 / length(testing$`Harga Rp/g`)
+MAPEtestingdes1 <- sum(abs(selisihdes1 / testing$`Harga Rp/g`) * 100) / length(testing$`Harga Rp/g`)
+
+selisihdes2 <- ramalandes2$mean - testing$`Harga Rp/g`
+selisihdes2
+
+SSEtestingdes2 <- sum(selisihdes2^2)
+MSEtestingdes2 <- SSEtestingdes2 / length(testing$`Harga Rp/g`)
+MAPEtestingdes2 <- sum(abs(selisihdes2 / testing$`Harga Rp/g`) * 100) / length(testing$`Harga Rp/g`)
+
+selisihdesopt <- ramalandesopt$mean - testing$`Harga Rp/g`
+selisihdesopt
+
+SSEtestingdesopt <- sum(selisihdesopt^2)
+MSEtestingdesopt <- SSEtestingdesopt / length(testing$`Harga Rp/g`)
+MAPEtestingdesopt <- sum(abs(selisihdesopt / testing$`Harga Rp/g`) * 100) / length(testing$`Harga Rp/g`)
+
+akurasitestingdes <- matrix(
+  c(SSEtestingdes1, MSEtestingdes1, MAPEtestingdes1,
+    SSEtestingdes2, MSEtestingdes2, MAPEtestingdes2,
+    SSEtestingdesopt, MSEtestingdesopt, MAPEtestingdesopt),
+  nrow = 3, ncol = 3
+)
+
+row.names(akurasitestingdes) <- c("SSE", "MSE", "MAPE")
+colnames(akurasitestingdes) <- c("des ske1", "des ske2", "des opt")
+akurasitestingdes
+```
+
+
+## Winter Aditif
+
+```{r}
+train.ts.winter <- ts(training$`Harga Rp/g`, frequency = 7)
+test.ts.winter  <- ts(testing$`Harga Rp/g`, frequency = 7)
+
+winter1 <- HoltWinters(train.ts.winter,alpha=0.2,beta=0.1,gamma=0.1,seasonal = "additive")
+winter1$fitted
+xhat1 <- winter1$fitted[,2]
+
+winter1.opt<- HoltWinters(train.ts.winter, alpha= NULL,  beta = NULL, gamma = NULL, seasonal = "additive")
+winter1.opt
+winter1.opt$fitted
+xhat1.opt <- winter1.opt$fitted[,2]
+```
+```{r}
+forecast1 <- predict(winter1, n.ahead = 42)
+forecast1.opt <- predict(winter1.opt, n.ahead = 42)
+forecast1.opt
+```
+
+```{r}
+plot(train.ts.winter,main="Winter 0.2;0.1;0.1",type="l",col="black",
+     xlim=c(1,25),pch=12)
+lines(xhat1,type="l",col="red")
+lines(xhat1.opt,type="l",col="blue")
+lines(forecast1,type="l",col="red")
+lines(forecast1.opt,type="l",col="blue")
+legend("topleft",c("Actual Data",expression(paste(winter1)),
+                   expression(paste(winter1.opt))),cex=0.5,
+       col=c("black","red","blue"),lty=1)
+```
+```{r}
+alpha_winter <- winter1.opt$alpha
+beta_winter  <- winter1.opt$beta
+gamma_winter <- winter1.opt$gamma
+
+ada_tren <- ifelse(beta_winter > 0.01, TRUE, FALSE)
+ada_musiman <- ifelse(gamma_winter > 0.01, TRUE, FALSE)
+
+ada_tren
+ada_musiman
+```
+### Akurasi Data Latih
+
+```{r}
+SSE1 <- winter1$SSE
+MSE1 <- winter1$SSE / length(train.ts.winter)
+RMSE1 <- sqrt(MSE1)
+
+
+fitted1 <- as.numeric(winter1$fitted[, 1])
+error_train1 <- as.numeric(train.ts.winter) - fitted1
+MAPE1 <- mean(abs((error_train1 / as.numeric(train.ts.winter)) * 100), na.rm = TRUE)
+
+akurasi1 <- matrix(c(SSE1, MSE1, RMSE1, MAPE1), nrow = 4)
+row.names(akurasi1) <- c("SSE", "MSE", "RMSE", "MAPE")
+colnames(akurasi1) <- c("Akurasi Winter Aditif Manual")
+akurasi1
+
+
+SSE1.opt <- winter1.opt$SSE
+MSE1.opt <- winter1.opt$SSE / length(train.ts.winter)
+RMSE1.opt <- sqrt(MSE1.opt)
+
+fitted1.opt <- as.numeric(winter1.opt$fitted[, 1])
+error_train1.opt <- as.numeric(train.ts.winter) - fitted1.opt
+MAPE1.opt <- mean(abs((error_train1.opt / as.numeric(train.ts.winter)) * 100), na.rm = TRUE)
+
+akurasi1.opt <- matrix(c(SSE1.opt, MSE1.opt, RMSE1.opt, MAPE1.opt), nrow = 4)
+row.names(akurasi1.opt) <- c("SSE", "MSE", "RMSE", "MAPE")
+colnames(akurasi1.opt) <- c("Akurasi Winter Aditif Optimum")
+akurasi1.opt
+```
+
+### Akurasi Data Uji
+```{r}
+forecast1_vec <- as.numeric(forecast1[, 1])
+aktual_vec <- as.numeric(testing$`Harga Rp/g`)
+
+n <- min(length(forecast1_vec), length(aktual_vec))
+forecast1_vec <- forecast1_vec[1:n]
+aktual_vec <- aktual_vec[1:n]
+
+selisih1 <- forecast1_vec - aktual_vec
+
+valid <- is.finite(selisih1) & is.finite(aktual_vec) & aktual_vec != 0
+selisih_clean <- selisih1[valid]
+aktual_clean <- aktual_vec[valid]
+
+SSE1 <- sum(selisih_clean^2)
+MSE1 <- SSE1 / length(aktual_clean)
+MAPE1 <- mean(abs(selisih_clean / aktual_clean) * 100)
+
+forecast1.opt_vec <- as.numeric(forecast1.opt[, 1])
+forecast1.opt_vec <- forecast1.opt_vec[1:n]
+selisih1.opt <- forecast1.opt_vec - aktual_vec
+
+valid_opt <- is.finite(selisih1.opt) & is.finite(aktual_vec) & aktual_vec != 0
+selisih_opt_clean <- selisih1.opt[valid_opt]
+aktual_opt_clean <- aktual_vec[valid_opt]
+
+SSE1.opt <- sum(selisih_opt_clean^2)
+MSE1.opt <- SSE1.opt / length(aktual_opt_clean)
+MAPE1.opt <- mean(abs(selisih_opt_clean / aktual_opt_clean) * 100)
+
+akurasi_testing <- data.frame(
+  Model = c("Winter Additive Manual", "Winter Additive Optimum"),
+  SSE   = c(SSE1, SSE1.opt),
+  MSE   = c(MSE1, MSE1.opt),
+  MAPE  = c(MAPE1, MAPE1.opt)
+)
+
+akurasi_testing
+```
+
+
+## Winter Multiplikatif
+
+```{r}
+winter2 <- HoltWinters(train.ts.winter,alpha=0.2,beta=0.1,gamma=0.3,seasonal = "multiplicative")
+winter2$fitted
+xhat2 <- winter2$fitted[,2]
+
+winter2.opt<- HoltWinters(train.ts.winter, alpha= NULL,  beta = NULL, gamma = NULL, seasonal = "multiplicative")
+winter2.opt$fitted
+xhat2.opt <- winter2.opt$fitted[,2]
+```
+
+
+```{r}
+forecast2 <- predict(winter2, n.ahead = 42)
+forecast2.opt <- predict(winter2.opt, n.ahead = 42)
+```
+
+
+```{r}
+plot(train.ts.winter,main="Winter 0.2;0.1;0.1",type="l",col="black",
+     xlim=c(1,25),pch=12)
+lines(xhat2,type="l",col="red")
+lines(xhat2.opt,type="l",col="blue")
+lines(forecast2,type="l",col="red")
+lines(forecast2.opt,type="l",col="blue")
+legend("topleft",c("Actual Data",expression(paste(winter2)),
+                   expression(paste(winter2.opt))),cex=0.5,
+       col=c("black","red","blue"),lty=1)
+```
+```{r}
+alpha_mul <- winter2.opt$alpha
+beta_mul  <- winter2.opt$beta
+gamma_mul <- winter2.opt$gamma
+
+ada_tren_mul <- ifelse(beta_mul > 0.01, TRUE, FALSE)
+ada_musiman_mul <- ifelse(gamma_mul > 0.01, TRUE, FALSE)
+
+ada_tren_mul
+ada_musiman_mul
+```
+
+### Akurasi Data Latih
+
+```{r}
+SSE2 <- winter2$SSE
+MSE2 <- winter2$SSE / length(train.ts.winter)
+RMSE2 <- sqrt(MSE2)
+
+fitted2 <- as.numeric(winter2$fitted[, 1])
+error_train2 <- as.numeric(train.ts.winter) - fitted2
+MAPE2 <- mean(abs((error_train2 / as.numeric(train.ts.winter)) * 100), na.rm = TRUE)
+
+akurasi2 <- matrix(c(SSE2, MSE2, RMSE2, MAPE2), nrow = 4)
+row.names(akurasi2) <- c("SSE", "MSE", "RMSE", "MAPE")
+colnames(akurasi2) <- c("Akurasi Winter Multiplikatif Manual")
+akurasi2
+
+
+SSE2.opt <- winter2.opt$SSE
+MSE2.opt <- winter2.opt$SSE / length(train.ts.winter)
+RMSE2.opt <- sqrt(MSE2.opt)
+
+fitted2.opt <- as.numeric(winter2.opt$fitted[, 1])
+error_train2.opt <- as.numeric(train.ts.winter) - fitted2.opt
+MAPE2.opt <- mean(abs((error_train2.opt / as.numeric(train.ts.winter)) * 100), na.rm = TRUE)
+
+akurasi2.opt <- matrix(c(SSE2.opt, MSE2.opt, RMSE2.opt, MAPE2.opt), nrow = 4)
+row.names(akurasi2.opt) <- c("SSE", "MSE", "RMSE", "MAPE")
+colnames(akurasi2.opt) <- c("Akurasi Winter Multiplikatif Optimum")
+akurasi2.opt
+```
+
+### Akurasi Data Uji
+
+```{r}
+forecast2_vec <- as.numeric(forecast2[, 1])
+aktual_vec <- as.numeric(testing$`Harga Rp/g`)
+
+n <- min(length(forecast2_vec), length(aktual_vec))
+forecast2_vec <- forecast2_vec[1:n]
+aktual_vec <- aktual_vec[1:n]
+
+selisih2 <- forecast2_vec - aktual_vec
+
+valid2 <- is.finite(selisih2) & is.finite(aktual_vec) & aktual_vec != 0
+selisih2_clean <- selisih2[valid2]
+aktual2_clean <- aktual_vec[valid2]
+
+SSE2 <- sum(selisih2_clean^2)
+MSE2 <- SSE2 / length(aktual2_clean)
+MAPE2 <- mean(abs(selisih2_clean / aktual2_clean) * 100)
+
+forecast2.opt_vec <- as.numeric(forecast2.opt[, 1])
+forecast2.opt_vec <- forecast2.opt_vec[1:n]
+selisih2.opt <- forecast2.opt_vec - aktual_vec
+
+valid2.opt <- is.finite(selisih2.opt) & is.finite(aktual_vec) & aktual_vec != 0
+selisih2.opt_clean <- selisih2.opt[valid2.opt]
+aktual2.opt_clean <- aktual_vec[valid2.opt]
+
+SSE2.opt <- sum(selisih2.opt_clean^2)
+MSE2.opt <- SSE2.opt / length(aktual2.opt_clean)
+MAPE2.opt <- mean(abs(selisih2.opt_clean / aktual2.opt_clean) * 100)
+
+akurasi_testing2 <- data.frame(
+  Model = c("Winter Multiplikatif Manual", "Winter Multiplikatif Optimum"),
+  SSE   = c(SSE2, SSE2.opt),
+  MSE   = c(MSE2, MSE2.opt),
+  MAPE  = c(MAPE2, MAPE2.opt)
+)
+
+akurasi_testing2
+```
+
+
+# Perbandingan Akurasi Data Uji
+```{r}
+tabel_akurasi <- data.frame(
+  Metode = c("SMA", "DMA", "SES", "DES Optimum", "Winter Add Optimum", "Winter Mul Optimum"),
+  SSE = c(
+    akurasi_test.sma[1],          
+    akurasi_test.dma[1],          
+    akurasi_test[1],              
+    akurasitestingdes[1, 3],      
+    akurasi_testing[2, 2],        
+    akurasi_testing2[2, 2]        
+  ),
+  MSE = c(
+    akurasi_test.sma[2],
+    akurasi_test.dma[2],
+    akurasi_test[2],
+    akurasitestingdes[2, 3],
+    akurasi_testing[2, 3],        
+    akurasi_testing2[2, 3]
+  ),
+  RMSE = c(
+    sqrt(akurasi_test.sma[2]),
+    sqrt(akurasi_test.dma[2]),
+    akurasi_test[3],              
+    sqrt(akurasitestingdes[2, 3]),
+    sqrt(akurasi_testing[2, 3]),
+    sqrt(akurasi_testing2[2, 3])
+  ),
+  MAPE = c(
+    akurasi_test.sma[3],
+    akurasi_test.dma[3],
+    akurasi_test[4],              
+    akurasitestingdes[3, 3],      
+    akurasi_testing[2, 4],        
+    akurasi_testing2[2, 4]
+  )
+)
+tabel_akurasi
 ```
 # Kesimpulan
-Jadi, metode pemulusan terbaik adalah Metode Single Exponential Smoothing (SES). Meskipun data yang digunakan terindikasi sebagai data musiman, metriks SSE, MSE, RMSE, dan MAPE dari metode SES konsisten menjadi nilai error terkecil di antara metode lainnya sehingga metode SES mempunyai kesalahan prediksi lebih kecil dan peramalan yang dihasilkan paling mendekati data aktual dibandingkan metode lain.
+Metode pemulusan terbaik adalah Metode Winter Multiplikatif. Berdasarkan hasil optimasi parameter pada model Holt-Winters Aditif dan Multiplikatif, kedua model secara konsisten menunjukkan bahwa data tidak memiliki tren yang signifikan (beta < 0.01), tetapi memiliki komponen musiman yang kuat (gamma > 0.01). Hal ini mengindikasikan bahwa metode yang memperhitungkan musiman, seperti Holt-Winters, lebih sesuai untuk data ini. Hal ini juga ditunjukkan oleh metriks SSE, MSE, RMSE, dan MAPE dari kedua metode Winter yang tidak jauh berbeda satu sama lain dan menjadi nilai error yang kecil jika dibandingkan dengan metode lainnya. Namun, metode Winter Multiplikatif tetap konsisten menunjukkan nilai error terkecil sehingga metode ini mempunyai kesalahan prediksi lebih kecil dan peramalan yang dihasilkan paling mendekati data aktual dibandingkan metode lain.
