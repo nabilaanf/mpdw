@@ -12,6 +12,7 @@ output:
 ---
 
 # Library/Packages
+
 ```{r}
 library(forecast)
 library(graphics)
@@ -24,6 +25,7 @@ library(stats)
 ```
 
 # Impor Data
+
 ```{r}
 data<- import("https://raw.githubusercontent.com/nabilaanf/mpdw/refs/heads/main/Pertemuan%201/Gugus%20Data%20yang%20Dipakai_XAU_IDR%20Historical%20Data.xlsx")
 
@@ -33,11 +35,13 @@ data
 ```
 
 # Eksplorasi Data
+
 ```{r}
 View(data)
 str(data)
 dim(data)
 ```
+
 ```{r}
 data.ts<-ts(data$`Harga Rp/g`)
 summary(data.ts)
@@ -48,7 +52,9 @@ ts.plot(data.ts, xlab="Periode Waktu", ylab="Harga Emas (Rp/g)",
         main = "Time Series Plot")
 points(data.ts)
 ```
+
 # Pembagian Data
+
 ```{r}
 n <- nrow(data)
 n_train <- floor(0.8 * n)
@@ -62,7 +68,9 @@ test.ts  <- ts(testing$`Harga Rp/g`)
 cat("Training :", length(train.ts), "data\n")
 cat("Testing  :", length(test.ts), "data\n")
 ```
+
 ## Eksplorasi Data Latih dan Data Uji
+
 ```{r}
 plot(data.ts, col="red",main="Plot semua data")
 points(data.ts)
@@ -96,8 +104,13 @@ ggplot(data_all, aes(x = Index, y = Harga, color = status, group = 1)) +
   theme_bw() +
   theme(legend.position = "bottom")
 ```
-#  Pemulusan
+
+
+# Pemulusan
+
+
 ## Single Moving Average (SMA)
+
 ```{r}
 data.sma<-SMA(train.ts, n=4)
 data.sma
@@ -141,7 +154,9 @@ row.names(akurasi_train.sma) <- c("SSE", "MSE", "MAPE")
 colnames(akurasi_train.sma) <- c("Akurasi m = 4")
 akurasi_train.sma
 ```
+
 ### Akurasi Data Uji
+
 ```{r}
 ramalan_test.sma <- data.gab[(n_train + 1):n, 3]  
 error_test.sma <- test.ts - ramalan_test.sma
@@ -156,8 +171,8 @@ colnames(akurasi_test.sma) <- c("Akurasi m = 4")
 akurasi_test.sma
 ```
 
-
 ## Double Moving Average (DMA)
+
 ```{r}
 n_test <- length(test.ts)
 
@@ -180,7 +195,6 @@ data.gab.dma <- cbind(
 data.gab.dma
 ```
 
-
 ```{r}
 ts.plot(data.ts, xlab="Periode Waktu", ylab="Harga Emas (Rp/g)", main= "DMA N=4 Data Harga Emas")
 points(data.ts)
@@ -189,7 +203,10 @@ lines(data.gab.dma[,3],col="red",lwd=2)
 legend("topleft",c("data aktual","data pemulusan","data peramalan"), lty=8, col=c("black","green","red"), cex=0.6)
 ```
 
+
 ### Akurasi Data Latih
+
+
 ```{r}
 error_train.dma <- as.numeric(train.ts) - data.ramal[1:length(train.ts)]
 
@@ -204,7 +221,9 @@ row.names(akurasi_train.dma) <- c("SSE", "MSE", "MAPE")
 colnames(akurasi_train.dma) <- c("Akurasi m = 4")
 akurasi_train.dma
 ```
+
 ### Akurasi Data Uji
+
 ```{r}
 ramalan_test.dma <- as.numeric(data.gab.dma[(n_train + 1):n, 3])
 aktual_test.dma <- as.numeric(test.ts)
@@ -235,7 +254,6 @@ autoplot(ses1) +
   ylab("Harga Emas") + xlab("Periode")
 ```
 
-
 ```{r}
 ses2<- HoltWinters(train.ts, gamma = FALSE, beta = FALSE, alpha = 0.5)
 plot(ses2)
@@ -243,7 +261,6 @@ plot(ses2)
 ramalan<- forecast(ses2, h=42)
 ramalan
 ```
-
 
 ```{r}
 ses.opt <- ses(train.ts, h = 42, alpha = NULL)
@@ -258,8 +275,8 @@ ramalanopt<- forecast(HWopt, h=42)
 ramalanopt
 ```
 
-
 ### Akurasi Data Latih (HWopt)
+
 ```{r}
 SSE<-HWopt$SSE
 MSE<-HWopt$SSE/length(train.ts)
@@ -286,7 +303,7 @@ colnames(akurasi) <- c("Akurasi Data Latih (HWopt)")
 akurasi
 ```
 
-### Akurasi Data Uji
+### Akurasi Data Uji (HWopt)
 
 ```{r}
 ramalan_test <- as.numeric(ramalanopt$mean)
@@ -304,6 +321,7 @@ akurasi_test
 ```
 
 ## Double Exponential Smoothing (DES)
+
 ```{r}
 des.1<- HoltWinters(train.ts, gamma = FALSE, beta = 0.2, alpha = 0.2)
 plot(des.1)
@@ -333,7 +351,7 @@ ramalandesopt<- forecast(des.opt, h=42)
 ramalandesopt
 ```
 
-#### Akurasi Data Latih
+### Akurasi Data Latih
 
 ```{r}
 ssedes.train1<-des.1$SSE
@@ -423,7 +441,6 @@ colnames(akurasitestingdes) <- c("des ske1", "des ske2", "des opt")
 akurasitestingdes
 ```
 
-
 ## Winter Aditif
 
 ```{r}
@@ -439,6 +456,7 @@ winter1.opt
 winter1.opt$fitted
 xhat1.opt <- winter1.opt$fitted[,2]
 ```
+
 ```{r}
 forecast1 <- predict(winter1, n.ahead = 42)
 forecast1.opt <- predict(winter1.opt, n.ahead = 42)
@@ -456,6 +474,7 @@ legend("topleft",c("Actual Data",expression(paste(winter1)),
                    expression(paste(winter1.opt))),cex=0.5,
        col=c("black","red","blue"),lty=1)
 ```
+
 ```{r}
 alpha_winter <- winter1.opt$alpha
 beta_winter  <- winter1.opt$beta
@@ -467,6 +486,7 @@ ada_musiman <- ifelse(gamma_winter > 0.01, TRUE, FALSE)
 ada_tren
 ada_musiman
 ```
+
 ### Akurasi Data Latih
 
 ```{r}
@@ -500,6 +520,7 @@ akurasi1.opt
 ```
 
 ### Akurasi Data Uji
+
 ```{r}
 forecast1_vec <- as.numeric(forecast1[, 1])
 aktual_vec <- as.numeric(testing$`Harga Rp/g`)
@@ -540,7 +561,6 @@ akurasi_testing <- data.frame(
 akurasi_testing
 ```
 
-
 ## Winter Multiplikatif
 
 ```{r}
@@ -553,12 +573,10 @@ winter2.opt$fitted
 xhat2.opt <- winter2.opt$fitted[,2]
 ```
 
-
 ```{r}
 forecast2 <- predict(winter2, n.ahead = 42)
 forecast2.opt <- predict(winter2.opt, n.ahead = 42)
 ```
-
 
 ```{r}
 plot(train.ts.winter,main="Winter 0.2;0.1;0.1",type="l",col="black",
@@ -571,6 +589,7 @@ legend("topleft",c("Actual Data",expression(paste(winter2)),
                    expression(paste(winter2.opt))),cex=0.5,
        col=c("black","red","blue"),lty=1)
 ```
+
 ```{r}
 alpha_mul <- winter2.opt$alpha
 beta_mul  <- winter2.opt$beta
@@ -656,8 +675,8 @@ akurasi_testing2 <- data.frame(
 akurasi_testing2
 ```
 
-
 # Perbandingan Akurasi Data Uji
+
 ```{r}
 tabel_akurasi <- data.frame(
   Metode = c("SMA", "DMA", "SES", "DES Optimum", "Winter Add Optimum", "Winter Mul Optimum"),
@@ -696,5 +715,7 @@ tabel_akurasi <- data.frame(
 )
 tabel_akurasi
 ```
+
 # Kesimpulan
-Metode pemulusan terbaik adalah Metode Winter Multiplikatif. Berdasarkan hasil optimasi parameter pada model Holt-Winters Aditif dan Multiplikatif, kedua model secara konsisten menunjukkan bahwa data tidak memiliki tren yang signifikan (beta < 0.01), tetapi memiliki komponen musiman yang kuat (gamma > 0.01). Hal ini mengindikasikan bahwa metode yang memperhitungkan musiman, seperti Holt-Winters, lebih sesuai untuk data ini. Hal ini juga ditunjukkan oleh metriks SSE, MSE, RMSE, dan MAPE dari kedua metode Winter yang tidak jauh berbeda satu sama lain dan menjadi nilai error yang kecil jika dibandingkan dengan metode lainnya. Namun, metode Winter Multiplikatif tetap konsisten menunjukkan nilai error terkecil sehingga metode ini mempunyai kesalahan prediksi lebih kecil dan peramalan yang dihasilkan paling mendekati data aktual dibandingkan metode lain.
+
+Metode pemulusan terbaik adalah Metode Winter Multiplikatif. Berdasarkan hasil optimasi parameter pada model Holt-Winters Aditif dan Multiplikatif, kedua model secara konsisten menunjukkan bahwa data tidak memiliki tren yang signifikan (beta \< 0.01), tetapi memiliki komponen musiman yang kuat (gamma \> 0.01). Hal ini mengindikasikan bahwa metode yang memperhitungkan musiman, seperti Holt-Winters, lebih sesuai untuk data ini. Hal ini juga ditunjukkan oleh metriks SSE, MSE, RMSE, dan MAPE dari kedua metode Winter yang tidak jauh berbeda satu sama lain dan menjadi nilai error yang kecil jika dibandingkan dengan metode lainnya. Namun, metode Winter Multiplikatif tetap konsisten menunjukkan nilai error terkecil sehingga metode ini mempunyai kesalahan prediksi lebih kecil dan peramalan yang dihasilkan paling mendekati data aktual dibandingkan metode lain.
