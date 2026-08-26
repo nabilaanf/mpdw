@@ -6,7 +6,7 @@ output:
   word_document: default
 ---
 
-## Library/Packages
+# Library/Packages
 
 *Package* R yang akan digunakan pada perkuliahan Analisis Deret Waktu sesi UTS adalah: `forecast`, `graphics`, `TTR`, `TSA` . Jika *package* tersebut belum ada, silakan install terlebih dahulu.
 
@@ -26,7 +26,7 @@ library("TTR")
 library("TSA")
 ```
 
-## Impor Data
+# Impor Data
 
 ```{r}
 library(rio) #install packages jika belum ada
