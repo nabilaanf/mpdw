@@ -1,1 +1,138 @@
+---
+title: "Praktikum 2"
+subtitle: "latihan ppt kuliah"
+author: "Nabila Nur Faizah"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+---
+
+# Library
+```{r}
+library(dplyr)
+library(TTR)
+library(forecast)
+library(lmtest) 
+library(orcutt) 
+library(HoRM) 
+```
+
+
+# Input Data
+```{r}
+data <- data.frame(
+  Period = 1:20,
+  Market_share = c(3.63, 4.20, 3.33, 4.54, 2.89, 4.87, 4.90, 5.29, 6.18, 7.20,
+                   7.25, 6.09, 6.80, 8.65, 8.43, 8.29, 7.18, 7.90, 8.45, 8.23),
+  Price = c(0.97, 0.95, 0.99, 0.91, 0.98, 0.90, 0.89, 0.86, 0.85, 0.82,
+            0.79, 0.83, 0.81, 0.77, 0.76, 0.80, 0.83, 0.79, 0.76, 0.78)
+)
+
+print(data)
+```
+
+# Eksplorasi
+```{r}
+marketshare.ts<-ts(data$Market_share)
+price.ts<-ts(data$Price)
+
+ts.plot(marketshare.ts, xlab="Time Period ", ylab="Market Share", main= "Time Series Plot of Market Share")
+points(marketshare.ts)
+
+ts.plot(price.ts, xlab="Time Period ", ylab="Price", main= "Time Series Plot of Price")
+points(price.ts)
+```
+```{r}
+ms.sma <- SMA(marketshare.ts, n=3)
+ms.dma <- SMA(ms.sma, n = 3)
+At <- 2*ms.sma - ms.dma
+Bt <- 2/(3-1)*(ms.sma - ms.dma)
+ms.dma<- At+Bt
+ms.ramal<- c(NA, ms.dma)
+
+t = 1:5
+f = c()
+
+for (i in t) {
+  f[i] = At[length(At)] + Bt[length(Bt)]*(i)
+}
+
+ms.gab <- cbind(aktual = c(marketshare.ts,rep(NA,5)), 
+                pemulusan1 = c(ms.sma,rep(NA,5)),
+                pemulusan2 = c(ms.dma, rep(NA,5)),
+                At = c(At, rep(NA,5)), 
+                Bt = c(Bt,rep(NA,5)),
+                ramalan = c(ms.ramal, f[-1]))
+ms.gab
+
+ts.plot(ms.gab[,1], xlab="Time Period ", ylab="Market Share", 
+        main= "DMA N=3 Data Market Share", ylim=c(0,10))
+points(ms.gab[,1])
+points(ms.gab[,3])
+points(ms.gab[,6])
+lines(ms.gab[,3],col="green",lwd=2)
+lines(ms.gab[,6],col="red",lwd=2)
+legend("topleft",c("data aktual","data pemulusan","data peramalan"), 
+       lty=8, col=c("black","green","red"), cex=0.8)
+```
+```{r}
+error.dma.ms = marketshare.ts-ms.ramal[1:length(marketshare.ts)]
+SSE.dma.ms = sum(error.dma.ms[6:length(marketshare.ts)]^2)
+MSE.dma.ms = mean(error.dma.ms[6:length(marketshare.ts)]^2)
+MAPE.dma.ms = mean(abs((error.dma.ms[6:length(marketshare.ts)]/marketshare.ts[6:length(marketshare.ts)])*100))
+
+akurasi.dma.ms <- matrix(c(SSE.dma.ms, MSE.dma.ms, MAPE.dma.ms))
+row.names(akurasi.dma.ms)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi.dma.ms) <- c("Akurasi Market Share m = 3")
+akurasi.dma.ms
+```
+
+```{r}
+p.sma <- SMA(price.ts, n=3)
+p.dma <- SMA(p.sma, n = 3)
+At <- 2*p.sma - p.dma
+Bt <- 2/(3-1)*(p.sma - p.dma)
+p.dma<- At+Bt
+p.ramal<- c(NA, p.dma)
+
+t = 1:5
+f = c()
+
+for (i in t) {
+  f[i] = At[length(At)] + Bt[length(Bt)]*(i)
+}
+
+p.gab <- cbind(aktual = c(price.ts,rep(NA,5)), 
+                pemulusan1 = c(p.sma,rep(NA,5)),
+                pemulusan2 = c(p.dma, rep(NA,5)),
+                At = c(At, rep(NA,5)), 
+                Bt = c(Bt,rep(NA,5)),
+                ramalan = c(p.ramal, f[-1]))
+p.gab
+
+ts.plot(p.gab[,1], xlab="Time Period ", ylab="Price", 
+        main= "DMA N=3 Data Price", ylim=c(0.6,1))
+points(p.gab[,1])
+points(p.gab[,3])
+points(p.gab[,6])
+lines(p.gab[,3],col="green",lwd=2)
+lines(p.gab[,6],col="red",lwd=2)
+legend("topleft",c("data aktual","data pemulusan","data peramalan"), 
+       lty=8, col=c("black","green","red"), cex=0.8)
+```
+```{r}
+error.dma.p = price.ts-p.ramal[1:length(price.ts)]
+SSE.dma.p = sum(error.dma.p[6:length(price.ts)]^2)
+MSE.dma.p = mean(error.dma.p[6:length(price.ts)]^2)
+MAPE.dma.p = mean(abs((error.dma.p[6:length(price.ts)]/price.ts[6:length(price.ts)])*100))
+
+akurasi.dma.p <- matrix(c(SSE.dma.p, MSE.dma.p, MAPE.dma.p))
+row.names(akurasi.dma.p)<- c("SSE", "MSE", "MAPE")
+colnames(akurasi.dma.p) <- c("Akurasi Price m = 3")
+akurasi.dma.p
+```
 
