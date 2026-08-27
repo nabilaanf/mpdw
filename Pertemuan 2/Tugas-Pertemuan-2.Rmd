@@ -12,6 +12,7 @@ output:
 ---
 
 # Library
+
 ```{r}
 library(dplyr)
 library(TTR)
@@ -19,10 +20,13 @@ library(forecast)
 library(lmtest) 
 library(orcutt) 
 library(HoRM) 
+library(car)
 ```
 
+# Soal 1
 
-# Input Data
+## Input Data
+
 ```{r}
 data <- data.frame(
   Period = 1:20,
@@ -31,108 +35,298 @@ data <- data.frame(
   Price = c(0.97, 0.95, 0.99, 0.91, 0.98, 0.90, 0.89, 0.86, 0.85, 0.82,
             0.79, 0.83, 0.81, 0.77, 0.76, 0.80, 0.83, 0.79, 0.76, 0.78)
 )
+y<-data$Price
+x<-data$Market_share
 
 print(data)
 ```
 
-# Eksplorasi
+## Eksplorasi
+
 ```{r}
-marketshare.ts<-ts(data$Market_share)
-price.ts<-ts(data$Price)
+par(mfrow=c(1,2))
+hist(x, main="Market Share", xlab="Value")
+hist(y, main="Price", xlab="Value")
+```
 
-ts.plot(marketshare.ts, xlab="Time Period ", ylab="Market Share", main= "Time Series Plot of Market Share")
-points(marketshare.ts)
+```{r}
+par(mfrow=c(1,2))
+boxplot(x,
+        main = "Market Share")
 
-ts.plot(price.ts, xlab="Time Period ", ylab="Price", main= "Time Series Plot of Price")
-points(price.ts)
+boxplot(y,
+        main = "Price")
 ```
 ```{r}
-ms.sma <- SMA(marketshare.ts, n=3)
-ms.dma <- SMA(ms.sma, n = 3)
-At <- 2*ms.sma - ms.dma
-Bt <- 2/(3-1)*(ms.sma - ms.dma)
-ms.dma<- At+Bt
-ms.ramal<- c(NA, ms.dma)
+plot(x,y,
+     main = "Price vs Market Share",
+     xlab = "Market Share",
+     ylab = "Harga")
+```
+```{r}
+cor(x, y, method="pearson")
+```
+## Regresi
+```{r}
+model1<-lm(y~x)
+summary(model1)
+```
+## Asumsi
+### Linearitas
+```{r}
+plot(x, y,
+     xlab = "Market Share", ylab = "Price",
+     main = "Hubungan Market Share vs Price",
+     pch = 16, col = "black")
 
-t = 1:5
-f = c()
+abline(lm(data$Price ~ data$Market_share, data = data), col = "red", lwd = 1)
+```
 
-for (i in t) {
-  f[i] = At[length(At)] + Bt[length(Bt)]*(i)
+```{r}
+raintest(model1)
+```
+### Normalitas
+```{r}
+plot(model1, 2)
+```
+```{r}
+shapiro.test(resid(model1))
+```
+### Homogenitas
+```{r}
+plot(model1, 1)
+```
+```{r}
+bptest(model1)
+```
+### Autokorelasi
+```{r}
+plot(x = 1:dim(data)[1],
+     y = model1$residuals,
+     type = 'b', 
+     ylab = "Residuals",
+     xlab = "Observation")
+```
+```{r}
+dwtest(model1)
+```
+## Penanganan Autokorelasi
+### Metode Cochrane-Orcutt
+```{r}
+modelco1<-cochrane.orcutt(model1)
+summary(modelco1)
+```
+```{r}
+rho<-modelco1$rho
+price.trans<- y[-1]-y[-length(y)]*rho
+marketshare.trans<- x[-1]-x[-length(x)]*rho
+modelco1manual<- lm(price.trans~marketshare.trans)
+summary(modelco1manual)
+```
+```{r}
+b0star <- modelco1manual$coefficients[-2]
+b0 <- b0star/(1-rho)
+b1 <- modelco1manual$coefficients[-1]
+b0
+b1
+```
+### Metode Hildreth-Lu
+```{r}
+r <- seq(0, 0.9, by = 0.1)
+tab <- data.frame(
+  rho = r,
+  SSE = sapply(r, function(rr) deviance(hildreth.lu(y, x, rr)))
+)
+
+tab            
+rho_hat <- tab$rho[which.min(tab$SSE)]   
+modelhl1  <- hildreth.lu(y, x, rho_hat)    
+summary(modelhl1)
+```
+```{r}
+hildreth.lu.func<- function(r, model1){
+  x <- model.matrix(model1)[,-1]
+  y <- model.response(model.frame(model1))
+  n <- length(y)
+  t <- 2:n
+  y <- y[t]-r*y[t-1]
+  x <- x[t]-r*x[t-1]
+  
+  return(lm(y~x))
 }
 
-ms.gab <- cbind(aktual = c(marketshare.ts,rep(NA,5)), 
-                pemulusan1 = c(ms.sma,rep(NA,5)),
-                pemulusan2 = c(ms.dma, rep(NA,5)),
-                At = c(At, rep(NA,5)), 
-                Bt = c(Bt,rep(NA,5)),
-                ramalan = c(ms.ramal, f[-1]))
-ms.gab
-
-ts.plot(ms.gab[,1], xlab="Time Period ", ylab="Market Share", 
-        main= "DMA N=3 Data Market Share", ylim=c(0,10))
-points(ms.gab[,1])
-points(ms.gab[,3])
-points(ms.gab[,6])
-lines(ms.gab[,3],col="green",lwd=2)
-lines(ms.gab[,6],col="red",lwd=2)
-legend("topleft",c("data aktual","data pemulusan","data peramalan"), 
-       lty=8, col=c("black","green","red"), cex=0.8)
+r <- c(seq(0.1,0.9, by= 0.1))
+tab <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model1))}))
+tab
 ```
 ```{r}
-error.dma.ms = marketshare.ts-ms.ramal[1:length(marketshare.ts)]
-SSE.dma.ms = sum(error.dma.ms[6:length(marketshare.ts)]^2)
-MSE.dma.ms = mean(error.dma.ms[6:length(marketshare.ts)]^2)
-MAPE.dma.ms = mean(abs((error.dma.ms[6:length(marketshare.ts)]/marketshare.ts[6:length(marketshare.ts)])*100))
+rOpt <- seq(0.3,0.5, by= 0.001)
+tabOpt <- data.frame("rho" = rOpt, "SSE" = sapply(rOpt, function(i){deviance(hildreth.lu.func(i, model1))}))
+head(tabOpt[order(tabOpt$SSE),])
 
-akurasi.dma.ms <- matrix(c(SSE.dma.ms, MSE.dma.ms, MAPE.dma.ms))
-row.names(akurasi.dma.ms)<- c("SSE", "MSE", "MAPE")
-colnames(akurasi.dma.ms) <- c("Akurasi Market Share m = 3")
-akurasi.dma.ms
+par(mfrow = c(1,1))
+plot(tab$SSE ~ tab$rho , type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = tabOpt[tabOpt$SSE==min(tabOpt$SSE),"rho"], lty = 2, col="red",lwd=2)
+text(x = min(tabOpt$rho), 
+     y = min(tabOpt$SSE), 
+     labels = paste("rho =", 0.41), 
+     cex = 0.9,
+     adj=c(0,-2))
+```
+```{r}
+modelhlmanual1 <- hildreth.lu.func(0.41, model1)
+summary(modelhlmanual1)
+
+cat("y = ", coef(modelhlmanual1)[1]/(1-0.41), " + ", "(", coef(modelhlmanual1)[2], ")", "x", sep = "")
 ```
 
+# Soal 2
+## Input Data
 ```{r}
-p.sma <- SMA(price.ts, n=3)
-p.dma <- SMA(p.sma, n = 3)
-At <- 2*p.sma - p.dma
-Bt <- 2/(3-1)*(p.sma - p.dma)
-p.dma<- At+Bt
-p.ramal<- c(NA, p.dma)
+sales <- c(11.7, 12.0, 12.3, 12.8, 13.1, 13.6, 13.9, 14.4, 14.7, 15.3,
+           15.5, 15.8, 16.1, 16.6, 16.9, 16.7, 16.9, 17.4, 17.6, 17.9,
+           18.0, 17.9, 18.0, 18.2, 18.2, 18.3, 18.6, 19.2, 19.3, 19.5,
+           19.2, 19.3, 19.5, 20.0, 20.0, 19.9, 19.8, 19.9, 20.2, 21.0)
 
-t = 1:5
-f = c()
+advertising <- c(9.4, 9.6, 10.0, 10.4, 10.8, 10.9, 11.7, 12.2, 12.5, 12.9,
+                 13.0, 13.2, 13.8, 14.2, 14.6, 14.4, 15.0, 15.4, 15.7, 15.9,
+                 15.9, 16.0, 16.3, 16.2, 16.8, 17.3, 17.6, 18.1, 18.3, 18.5,
+                 18.7, 18.9, 19.2, 20.0, 20.0, 20.3, 20.4, 21.0, 21.5, 22.1)
 
-for (i in t) {
-  f[i] = At[length(At)] + Bt[length(Bt)]*(i)
+x<-advertising
+y<-sales
+
+print(x,y)
+```
+
+## Eksplorasi
+```{r}
+par(mfrow=c(1,2))
+hist(x, main="Advertising", xlab="Value")
+hist(y, main="Sales", xlab="Value")
+```
+```{r}
+par(mfrow=c(1,2))
+boxplot(x, main="Advertising")
+boxplot(y, main="Sales")
+```
+```{r}
+plot(x,y)
+```
+```{r}
+cor(x,y, method="pearson")
+```
+## Regresi
+```{r}
+model2<-lm(y~x)
+summary(model2)
+```
+## Asumsi
+### Linearitas
+```{r}
+plot(x, y,
+     xlab = "Advertising", ylab = "Sales",
+     main = "Hubungan Advertising vs Sales",
+     pch = 16, col = "black")
+
+abline(lm(sales~advertising), col = "red", lwd = 1)
+```
+```{r}
+raintest(model2)
+```
+### Normalitas
+```{r}
+plot(model2, 2)
+```
+```{r}
+shapiro.test(model2$residuals)
+```
+### Homogenitas
+```{r}
+plot(model2, 1)
+```
+```{r}
+bptest(model2)
+```
+### Autokorelasi
+```{r}
+plot(x = 1:length(sales),
+     y = model2$residuals,
+     type = 'b', 
+     ylab = "Residuals",
+     xlab = "Observation")
+```
+```{r}
+dwtest(model2)
+```
+## Penanganan Autokorelasi
+### Metode Cochrane Orcutt
+```{r}
+modelco2<-cochrane.orcutt(model2)
+summary(modelco2)
+```
+```{r}
+rho<-modelco2$rho
+sales.trans<- y[-1]-y[-length(y)]*rho
+advertising.trans<- x[-1]-x[-length(x)]*rho
+modelco2manual<- lm(sales.trans~advertising.trans)
+summary(modelco2manual)
+```
+```{r}
+b0star <- modelco2manual$coefficients[-2]
+b0 <- b0star/(1-rho)
+b1 <- modelco2manual$coefficients[-1]
+b0
+b1
+```
+### Metode Hildreth-Lu
+```{r}
+r <- seq(0, 0.9, by = 0.1)
+tab <- data.frame(
+  rho = r,
+  SSE = sapply(r, function(rr) deviance(hildreth.lu(y, x, rr)))
+)
+
+tab            
+rho_hat <- tab$rho[which.min(tab$SSE)]   
+modelhl2  <- hildreth.lu(y, x, rho_hat)    
+summary(modelhl2)
+```
+```{r}
+hildreth.lu.func<- function(r, model2){
+  x <- model.matrix(model2)[,-1]
+  y <- model.response(model.frame(model2))
+  n <- length(y)
+  t <- 2:n
+  y <- y[t]-r*y[t-1]
+  x <- x[t]-r*x[t-1]
+  
+  return(lm(y~x))
 }
 
-p.gab <- cbind(aktual = c(price.ts,rep(NA,5)), 
-                pemulusan1 = c(p.sma,rep(NA,5)),
-                pemulusan2 = c(p.dma, rep(NA,5)),
-                At = c(At, rep(NA,5)), 
-                Bt = c(Bt,rep(NA,5)),
-                ramalan = c(p.ramal, f[-1]))
-p.gab
-
-ts.plot(p.gab[,1], xlab="Time Period ", ylab="Price", 
-        main= "DMA N=3 Data Price", ylim=c(0.6,1))
-points(p.gab[,1])
-points(p.gab[,3])
-points(p.gab[,6])
-lines(p.gab[,3],col="green",lwd=2)
-lines(p.gab[,6],col="red",lwd=2)
-legend("topleft",c("data aktual","data pemulusan","data peramalan"), 
-       lty=8, col=c("black","green","red"), cex=0.8)
+r <- c(seq(0.1,0.9, by= 0.1))
+tab <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model2))}))
+tab
 ```
 ```{r}
-error.dma.p = price.ts-p.ramal[1:length(price.ts)]
-SSE.dma.p = sum(error.dma.p[6:length(price.ts)]^2)
-MSE.dma.p = mean(error.dma.p[6:length(price.ts)]^2)
-MAPE.dma.p = mean(abs((error.dma.p[6:length(price.ts)]/price.ts[6:length(price.ts)])*100))
+rOpt <- seq(0.7,0.9, by= 0.001)
+tabOpt <- data.frame("rho" = rOpt, "SSE" = sapply(rOpt, function(i){deviance(hildreth.lu.func(i, model2))}))
+head(tabOpt[order(tabOpt$SSE),])
 
-akurasi.dma.p <- matrix(c(SSE.dma.p, MSE.dma.p, MAPE.dma.p))
-row.names(akurasi.dma.p)<- c("SSE", "MSE", "MAPE")
-colnames(akurasi.dma.p) <- c("Akurasi Price m = 3")
-akurasi.dma.p
+par(mfrow = c(1,1))
+plot(tab$SSE ~ tab$rho , type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = tabOpt[tabOpt$SSE==min(tabOpt$SSE),"rho"], lty = 2, col="red",lwd=2)
+text(x = min(tabOpt$rho), 
+     y = min(tabOpt$SSE), 
+     labels = paste("rho =", 0.9), 
+     cex = 0.9,
+     adj=c(-1.1,-2))
+```
+
+```{r}
+modelhlmanual2 <- hildreth.lu.func(0.9, model2)
+summary(modelhlmanual2)
+
+cat("y = ", coef(modelhlmanual2)[1]/(1-0.9), " + ", coef(modelhlmanual2)[2], "x", sep = "")
 ```
 
