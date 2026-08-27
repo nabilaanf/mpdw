@@ -1,6 +1,6 @@
 ---
-title: "Pertemuan 2"
-subtitle: "Praktikum"
+title: "Praktikum 2"
+subtitle: "Regresi Deret Waktu"
 author: "Nabila Nur Faizah"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output:
@@ -258,7 +258,7 @@ Berdasarkan hasil DW Test, didapatkan nilai $DW = 1.2644$ dan *p-value* = $0.037
 
 # Penanganan Autokorelasi
 
-## Metode Cochrane-Orcutt
+ ## Metode Cochrane-Orcutt
 
 Penanganan metode Cochrane-Orcutt dapat dilakukan dengan bantuan packages Orcutt pada aplikasi `R` maupun secara manual. Berikut ini ditampilkan cara menggunakan bantuan `library` *packages* `Orcutt`.
 
