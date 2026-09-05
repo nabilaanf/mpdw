@@ -236,6 +236,8 @@ perbandingan_model <- data.frame(
 perbandingan_model
 ```
 
+## Kesimpulan
+
 Model terbaik untuk data pada soal ini adalah Distributed Lag Model dengan Lag 6 (DLM 2). DLM 2 dengan lag 6 menunjukkan nilai MAPE, AIC, dan BIC terkecil jika dibandingkan dengan model lain. Pencarian nilai lag optimum juga menunjuk pada lag 6 sehingga mendukung kesimpulan bahwa model terbaik merupakan model distributed lag dengan lag 6. Selain itu, uji diagnostik menunjukkan bahwa DLM 2 memenuhi asumsi kebebasan, normalitas, dan kehomogenan. Berikut merupakan persamaan model terbaik:
 
 $$\hat{Y}_t=1.022983-0.022057X_t-0.003594X_{t-1}-0.006246_{t-2}+0.004456X_{t-3}-0.008770X_{t-4}-0.003178X_{t-5}+0.009219X_{t-6}$$
@@ -363,6 +365,8 @@ perbandingan_model <- data.frame(
 
 perbandingan_model
 ```
+
+## Kesimpulan
 
 Model terbaik untuk soal ini adalah Autoregressive Distributed Lag dengan lag p sebesar 1 dan q sebesar 2 (ARDL 2). Model ARDL 2 memperlihatkan konsisten nilai MAPE, AIC, dan BIC yang lebih kecil dari model ARDL 1. Walaupun model ARDL 2 (p=1, q=1) ini tidak menggunakan hasil dari pencarian lag optimum (p=15, q=2), model ARDL 2 tetap menjadi yang terbaik karena model ini tidak kehilangan banyak informasi seperti jika menggunakan lag optimum. Selain itu, uji diagnostik menunjukkan bahwa DLM 2 memenuhi asumsi kebebasan, normalitas, dan kehomogenan. Berikut merupakan persamaan model terbaik:
 
