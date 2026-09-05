@@ -1,1 +1,375 @@
+---
+title: "Praktikum 3"
+subtitle: "Latihan PPT Kuliah"
+author: "Nabila Nur Faizah"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
 
+# Packages
+
+```{r}
+library(dLagM)
+library(nardl)
+library(dynlm)
+library(zoo)
+library(MLmetrics)
+library(lmtest)
+library(car)
+library(carData)
+```
+
+# Soal 1
+
+## Data
+
+```{r}
+period<-c(1:20)
+market_share<-c(3.63, 4.20, 3.33, 4.54, 2.89, 4.87, 4.90, 5.29, 6.18, 7.20, 7.25, 6.09, 6.80, 8.65, 8.43, 8.29, 7.18, 7.90, 8.45, 8.23)
+price<-c(0.97, 0.95, 0.99, 0.91, 0.98, 0.90, 0.89, 0.86, 0.85, 0.82, 0.79, 0.83, 0.81, 0.77, 0.76, 0.80, 0.83, 0.79, 0.76, 0.78)
+
+data<-data.frame(period, market_share, price)
+data
+```
+
+```{r}
+train<-data[1:15,]
+test<-data[16:20,]
+train.ts<-ts(train)
+test.ts<-ts(test)
+data.ts<-ts(data)
+```
+
+## Model Koyck
+
+### Pemodelan
+
+```{r}
+model.koyck<-koyckDlm(x=train$market_share, y=train$price)
+summary(model.koyck)
+```
+
+```{r}
+AIC(model.koyck)
+BIC(model.koyck)
+```
+
+### Peramalan dan Akurasi
+
+```{r}
+fore.koyck<-forecast(model=model.koyck, x=test$market_share, h=5)
+fore.koyck
+```
+
+```{r}
+mape.koyck<-MAPE(fore.koyck$forecasts, test$price)
+mape.koyck
+```
+
+```{r}
+GoF(model.koyck)
+```
+
+## Regresi dengan Distributed Lag
+
+### Pemodelan
+
+```{r}
+model.dlm<-dlm(x=train$market_share, y=train$price, q=2)
+summary(model.dlm)
+```
+
+```{r}
+AIC(model.dlm)
+BIC(model.dlm)
+```
+
+### Peramalan dan Akurasi
+
+```{r}
+fore.dlm<-forecast(model=model.dlm, x=test$market_share, h=5)
+fore.dlm
+```
+
+```{r}
+mape.dlm<-MAPE(fore.dlm$forecasts, test$price)
+mape.dlm
+```
+
+```{r}
+GoF(model.dlm)
+```
+
+### Lag Optimum
+
+```{r}
+finiteDLMauto(formula=price~market_share,
+              data=data.frame(train), q.min=1, q.max=10,
+              model.type="dlm", error.type="AIC", trace=TRUE)
+```
+
+### Model dengan Lag Optimum
+
+```{r}
+model.dlm2<-dlm(x=train$market_share, y=train$price, q=6)
+summary(model.dlm2)
+```
+
+### Akurasi Data Training dengan Lag Optimum
+
+```{r}
+GoF(model.dlm2)
+```
+
+### Peramalan dan Akurasi dengan Lag Optimum
+
+```{r}
+fore.dlm2<-forecast(model=model.dlm2, x=test$market_share, h=5)
+
+mape.dlm2<-MAPE(fore.dlm2$forecasts, test$price)
+mape.dlm2
+```
+
+## Pemodelan dengan Library dynlm
+
+### Lag 1
+
+```{r}
+dlm3<-dynlm(price~market_share+L(market_share),data = train.ts)
+summary(dlm3)
+```
+
+```{r}
+fore.dlm3<-predict(dlm3, newdata = test.ts)
+mape.dlm3<-MAPE(fore.dlm3, test$price)
+mape.dlm3
+```
+
+```{r}
+AIC(dlm3)
+BIC(dlm3)
+```
+
+```{r}
+deviance(dlm3)
+```
+
+```{r}
+dwtest(dlm3)
+```
+
+```{r}
+bptest(dlm3)
+```
+
+```{r}
+shapiro.test(dlm3$residuals)
+```
+
+### Lag 6
+
+```{r}
+cekdlm2<-dynlm(price~market_share+L(market_share)+L(market_share,6),data = train.ts)
+summary(cekdlm2)
+```
+
+```{r}
+dwtest(cekdlm2)
+```
+
+```{r}
+bptest(cekdlm2)
+```
+
+```{r}
+shapiro.test(residuals(cekdlm2))
+```
+
+### Lag 8
+
+```{r}
+dlm4<-dynlm(price~market_share+L(market_share)+L(market_share,8),data = train.ts)
+summary(dlm4)
+```
+
+```{r}
+fore.dlm4<-predict(dlm4, newdata = test.ts)
+mape.dlm4<-MAPE(fore.dlm4, test$price)
+mape.dlm4
+```
+
+```{r}
+AIC(dlm4)
+BIC(dlm4)
+```
+
+```{r}
+deviance(dlm4)
+```
+
+```{r}
+dwtest(dlm4)
+```
+
+```{r}
+bptest(dlm4)
+```
+
+```{r}
+shapiro.test(dlm4$residuals)
+```
+
+## Perbandingan Model
+
+```{r}
+perbandingan_model <- data.frame(
+  Model = c("Koyck", "DLM 1 (q=2)", "DLM 2 (q=6)", "DLM 3 (q=1)", "DLM 4 (q=8)"),
+  MAPE = c(mape.koyck, mape.dlm, mape.dlm2, mape.dlm3, mape.dlm4),
+  AIC = c(AIC(model.koyck), AIC(model.dlm), AIC(model.dlm2), AIC(dlm3), AIC(dlm4)),
+  BIC = c(BIC(model.koyck), BIC(model.dlm), BIC(model.dlm2), BIC(dlm3), BIC(dlm4))
+)
+
+perbandingan_model
+```
+
+Model terbaik untuk data pada soal ini adalah Distributed Lag Model dengan Lag 6 (DLM 2). DLM 2 dengan lag 6 menunjukkan nilai MAPE, AIC, dan BIC terkecil jika dibandingkan dengan model lain. Pencarian nilai lag optimum juga menunjuk pada lag 6 sehingga mendukung kesimpulan bahwa model terbaik merupakan model distributed lag dengan lag 6. Selain itu, uji diagnostik menunjukkan bahwa DLM 2 memenuhi asumsi kebebasan, normalitas, dan kehomogenan. Berikut merupakan persamaan model terbaik:
+
+$$\hat{Y}_t=1.022983-0.022057X_t-0.003594X_{t-1}-0.006246_{t-2}+0.004456X_{t-3}-0.008770X_{t-4}-0.003178X_{t-5}+0.009219X_{t-6}$$
+
+- $Y_t$=Market share pada periode t
+
+- $X_t$=Price pada periode t
+
+- $X_{t-k}$=Price pada k periode sebelumnya (k={1, 2, 3, 4, 5, 6})
+
+# Soal 2
+
+## Data
+
+```{r}
+year<-c(1975:2014)
+sales<-c(11.7, 12.0, 12.3, 12.8, 13.1, 13.6, 13.9, 14.4, 14.7, 15.3, 15.5, 15.8, 16.1, 16.6, 16.9, 16.7, 16.9, 17.4, 17.6, 17.9, 18.0, 17.9, 18.0, 18.2, 18.2, 18.3, 18.6, 19.2, 19.3, 19.5, 19.2, 19.3, 19.5, 20.0, 20.0, 19.9, 19.8, 19.9, 20.2, 21.0)
+advertising<-c(9.4, 9.6, 10.0, 10.4, 10.8, 10.9, 11.7, 12.2, 12.5, 12.9, 13.0, 13.2, 13.8, 14.2, 14.6, 14.4, 15.0, 15.4, 15.7, 15.9, 15.9, 16.0, 16.3, 16.2, 16.8, 17.3, 17.6, 18.1, 18.3, 18.5, 18.7, 18.9, 19.2, 20.0, 20.0, 20.3, 20.4, 21.0, 21.5, 22.1)
+
+data2<-data.frame(year, sales, advertising)
+data2
+```
+
+```{r}
+train<-data2[1:30,]
+test<-data2[31:40,]
+train.ts<-ts(train)
+test.ts<-ts(test)
+data2.ts<-ts(data2)
+```
+
+## Model Autoregressive
+
+### Pemodelan
+
+```{r}
+model.ardl<-ardlDlm(formula=sales~advertising, data=train, p=5, q=9)
+summary(model.ardl)
+```
+
+```{r}
+AIC(model.ardl)
+BIC(model.ardl)
+```
+
+```{r}
+GoF(model.ardl)
+```
+
+### Peramalan dan Akurasi
+
+```{r}
+fore.ardl<-forecast(model=model.ardl, x=test$advertising, h=10)
+fore.ardl
+```
+
+```{r}
+mape.ardl<-MAPE(fore.ardl$forecasts, test$sales)
+mape.ardl
+```
+
+### Lag Optimum
+
+```{r}
+ardl.opt<-ardlBoundOrders(data=data.frame(data2), ic="AIC", formula=sales~advertising)
+ardl.opt
+```
+
+```{r}
+min_p=c()
+for(i in 1:15){
+  min_p[i]=min(ardl.opt$Stat.table[[i]])
+}
+q_opt=which(min_p==min(min_p, na.rm = TRUE))
+p_opt=which(ardl.opt$Stat.table[[q_opt]] == 
+              min(ardl.opt$Stat.table[[q_opt]], na.rm = TRUE))
+data.frame("q_optimum" = q_opt, "p_optimum" = p_opt, 
+           "AIC"=ardl.opt$min.Stat)
+```
+
+```{r}
+model.ardl.opt<- ardlDlm(formula = sales ~ advertising, data=train, p=p_opt, q=q_opt)
+summary(model.ardl.opt)
+```
+
+## Pemodelan dengan Library dynlm
+
+```{r}
+model.ardl2<-dynlm(sales~advertising+L(sales, 1),data = train.ts)
+summary(model.ardl2)
+```
+
+```{r}
+fore.ardl2<-predict(model.ardl2, newdata=test.ts)
+
+mape.ardl2<-MAPE(fore.ardl2, test$sales)
+mape.ardl2
+```
+
+```{r}
+deviance(model.ardl2)
+```
+
+```{r}
+dwtest(model.ardl2)
+```
+
+```{r}
+bptest(model.ardl2)
+```
+
+```{r}
+shapiro.test(residuals(model.ardl2))
+```
+
+## Perbandingan Model
+
+```{r}
+perbandingan_model <- data.frame(
+  Model = c("ARDL 1 (p=5 q=9)", "ARDL 2 (p=1 q=1)"),
+  MAPE = c(mape.ardl, mape.ardl2),
+  AIC = c(AIC(model.ardl), AIC(model.ardl2)),
+  BIC = c(BIC(model.ardl), BIC(model.ardl2))
+)
+
+perbandingan_model
+```
+
+Model terbaik untuk soal ini adalah Autoregressive Distributed Lag dengan lag p sebesar 1 dan q sebesar 2 (ARDL 2). Model ARDL 2 memperlihatkan konsisten nilai MAPE, AIC, dan BIC yang lebih kecil dari model ARDL 1. Walaupun model ARDL 2 (p=1, q=1) ini tidak menggunakan hasil dari pencarian lag optimum (p=15, q=2), model ARDL 2 tetap menjadi yang terbaik karena model ini tidak kehilangan banyak informasi seperti jika menggunakan lag optimum. Selain itu, uji diagnostik menunjukkan bahwa DLM 2 memenuhi asumsi kebebasan, normalitas, dan kehomogenan. Berikut merupakan persamaan model terbaik:
+
+$$\hat{Y}_t=1.71947+0.22200X_t+0.71154Y_{t-1}$$
+
+- $Y_t$=Sales pada tahun t
+
+- $X_t$=Advertising pada tahun t
+
+- $Y_{t-1}$=Sales pada tahum sebelumnya (lag 1)
