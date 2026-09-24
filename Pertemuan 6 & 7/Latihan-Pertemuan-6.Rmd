@@ -1,1 +1,352 @@
+---
+title: "Praktikum 6"
+subtitle: "Latihan"
+author: "Nabila Nur Faizah (M0401241048)"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
 
+# Packages
+
+```{r}
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(forecast)
+library(TSA)
+library(TTR)
+library(aTSA)
+library(graphics)
+library(readxl)
+library(rio)
+```
+
+# Data
+
+```{r}
+data<- import("https://raw.githubusercontent.com/nabilaanf/mpdw/refs/heads/main/Pertemuan%201/Gugus%20Data%20yang%20Dipakai_XAU_IDR%20Historical%20Data.xlsx")
+
+data$Date<-as.Date(data$Date, format="%m/%d/%Y")
+data<-data[order(data$Date),]
+data.ts<-ts(data[,3])
+data.ts
+```
+
+# Eksplorasi Data
+
+## Plot Data Penuh
+
+```{r}
+plot.ts(data.ts, 
+        lty = 1, 
+        xlab = "Waktu", 
+        ylab = "Harga", 
+        main = "Plot Data Harga Emas")
+```
+
+## Plot Data Latih
+
+```{r}
+train.ts<-data.ts[1:167]
+plot.ts(train.ts, lty=1, xlab="Waktu", ylab="Harga", main="Plot Harga Emas")
+```
+
+## Plot Data Uji
+
+```{r}
+test.ts<-data.ts[168:209]
+plot.ts(test.ts, lty=1, xlab="Waktu", ylab="Harga", main="Plot Harga Emas")
+```
+
+Deret harga emas XAU/IDR sepanjang 209 observasi bergerak naik‑turun tanpa tren yang persisten dan dengan fluktuasi yang relatif seragam di sepanjang rentang. Untuk keperluan pemodelan, data dibagi menjadi 167 observasi latih (indeks 1–167) dan 42 observasi uji (indeks 168–209) dengan proporsi kurang lebih 80:20. Pembagian ini mempertahankan urutan temporal sehingga kemampuan peramalan model dapat dievaluasi secara jujur pada data yang belum pernah dilihat saat pelatihan.
+
+# Uji Stasioneritas Data
+
+## Plot ACF
+
+```{r}
+acf(train.ts)
+```
+
+Terlihat bahwa plot ACF menurun secara perlahan (*tails of slowly*). Hal ini menjadi indikasi bahwa data tidak stasioner dalam rataan.
+
+## Plot ADF
+
+```{r}
+tseries::adf.test(train.ts)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF, didapat *p-value* sebesar 0.988 yang lebih besar dari taraf nyata 5%, maka tak tolak $H_0$. Hal ini berarti data tidak stasioner dalam rataan dan sesuai dengan hasil eksplorasi menggunakan plot time series dan plot ACF, sehingga ketidakstasioneran model kedepannya harus ditangani.
+
+## Plot Box-Cox
+
+```{r}
+index <- seq(1:167)
+
+bc <- boxcox(train.ts ~ index, lambda = seq(0.5, 2, by = 0.1))
+
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, df = 1)]
+
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+Uji Box‑Cox menghasilkan estimasi optimum $\hat{\lambda}$= 0.5 dengan interval kepercayaan 95% sebesar [0.50; 1.58]. Karena nilai 1 (skala asli) termuat di dalam interval tersebut, transformasi Box‑Cox tidak diperlukan dan pemodelan dilanjutkan pada skala asli.
+
+# Penanganan Ketidakstasioneran Data
+
+## Differencing
+
+```{r}
+train.diff<-diff(train.ts,differences = 1) 
+
+plot.ts(train.diff, lty=1, xlab="Waktu", ylab="Data Difference 1 Harga Emas", main="Plot Difference Harga Emas")
+```
+
+Berdasarkan plot data deret waktu, terlihat data sudah stasioner dalam rataan yang ditandai dengan data bergerak pada nilai tengah tertentu (tidak terdapat trend ataupun musiman pada data).
+
+## Plot ACF
+
+```{r}
+acf(train.diff)
+```
+
+## Uji ADF
+
+```{r}
+tseries::adf.test(train.diff)
+```
+
+Differencing orde satu menghasilkan deret $\Delta Y_t$ yang secara visual berpusat di sekitar nol tanpa tren, dengan ACF yang turun cepat. Uji ADF pada $\Delta Y_t$ memberikan DF = −6.789 dengan p‑value = 0.01, sehingga hipotesis nol ditolak dan deret differencing dinyatakan stasioner. Orde differencing d = 1 ditetapkan sebagai cukup.
+
+# Identifikasi Model
+
+## Plot ACF
+
+```{r}
+acf(train.diff)
+```
+
+## Plot PACF
+
+```{r}
+pacf(train.diff)
+```
+
+## Plot EACF
+
+```{r}
+eacf(train.diff)
+```
+
+Baik ACF maupun PACF pada $\Delta Y_t$ tampak datar, dengan hampir seluruh lag berada di dalam batas signifikansi ±0.15 dan tanpa pola *cut‑off* yang tajam. Kemiripan kedua plot ini menandakan deret differencing sudah mendekati *white noise*. Tabel EACF memperkuat temuan tersebut, yaitu tidak terbentuk blok “x” yang rapi pada orde rendah, melainkan sebaran “x” acak di sudut kiri‑bawah yang merupakan *noise floor*, disertai satu titik “x” terisolasi pada sel (p = 1, q = 12) yang merupakan outlier. Konsekuensinya, tidak ada ordo AR/MA menengah‑tinggi yang didukung data. Model tentatif ARIMA yang terbentuk dan akan ditinjau, antara lain, ARIMA(0,1,0), ARIMA(1,1,0), ARIMA(0,1,1), ARIMA(1,1,1), ARIMA(0,1,2), ARIMA(1,1,2), ARIMA(2,1,2), dan ARIMA(0,1,3)
+
+# Pendugaan Parameter Model Tentatif
+
+## ARIMA(0,1,0)
+
+```{r}
+model1.da=Arima(train.ts, order=c(0,1,0), method="ML")
+summary(model1.da)
+```
+
+## ARIMA(1,1,0)
+
+```{r}
+model2.da=Arima(train.ts, order=c(1,1,0),method="ML")
+summary(model2.da)
+lmtest::coeftest(model2.da) 
+```
+
+## ARIMA(0,1,1)
+
+```{r}
+model3.da=Arima(train.ts, order=c(0,1,1),method="ML")
+summary(model3.da) 
+lmtest::coeftest(model3.da) 
+```
+
+## ARIMA(1,1,1)
+
+```{r}
+model4.da=Arima(train.ts, order=c(1,1,1),method="ML")
+summary(model4.da) 
+lmtest::coeftest(model4.da) 
+```
+
+## ARIMA(0,1,2)
+
+```{r}
+model5.da=Arima(train.ts, order=c(0,1,2),method="ML")
+summary(model5.da) 
+lmtest::coeftest(model5.da) 
+```
+
+## ARIMA(1,1,2)
+
+```{r}
+model6.da=Arima(train.ts, order=c(1,1,2),method="ML")
+summary(model6.da) 
+lmtest::coeftest(model6.da) 
+```
+
+## ARIMA(2,1,2)
+
+```{r}
+model7.da=Arima(train.ts, order=c(2,1,2),method="ML")
+summary(model7.da) 
+lmtest::coeftest(model7.da) 
+```
+
+## ARIMA(0,1,3)
+
+```{r}
+model8.da=Arima(train.ts, order=c(0,1,3),method="ML")
+summary(model8.da) 
+lmtest::coeftest(model8.da) 
+```
+
+# Ringkasan AIC
+
+```{r}
+model_tentatif <- data.frame(
+  Model = c("ARIMA(0,1,0)","ARIMA(1,1,0)","ARIMA(0,1,1)", "ARIMA(1,1,1)", "ARIMA(0,1,2)", "ARIMA(1,1,2)", "ARIMA(2,1,2)", "ARIMA(0,1,3)"),
+  AIC   = c(AIC(model1.da),AIC(model2.da), AIC(model3.da), AIC(model4.da), AIC(model5.da), AIC(model6.da), AIC(model7.da), AIC(model8.da)),
+  BIC   = c(BIC(model1.da),BIC(model2.da), BIC(model3.da), BIC(model4.da), BIC(model5.da), BIC(model6.da), BIC(model7.da), BIC(model8.da))
+)
+
+model_tentatif
+```
+
+Berdasarkan pendugaan parameter di atas, nilai AIC terkecil dimiliki oleh ARIMA(0,1,0) atau data yang telah mengalami *differencing* satu kali tanpa komponen AR dan MA. ARIMA(0,1,0) juga Terdapat satu model lain yang dapat menjadi tandingan, yaitu ARIMA(2,1,2). Model ARIMA(2,1,2) memiliki AIC terkecil setelah ARIMA(0,1,0) dan semua parameternya signifikan. Namun, model ARIMA (2,1,2) tidak memenuhi kondisi invertibility pada komponen MA(2). Dari temuan tersebut dan prinsip parsimoni, ARIMA(0,1,0) yang akan dilanjutkan ke tahap diagnostik model untuk memenuhi syarat sebagai model terbaik.
+
+# Analisis Sisaan
+
+## Eksplorasi Sisaan
+
+```{r}
+sisaan.da <- model1.da$residuals
+
+par(mfrow = c(2,2),    
+    mar = c(4,4,2,1),  
+    oma = c(0,0,2,0))  
+
+qqnorm(sisaan.da, main = "Normal Q-Q Plot")
+qqline(sisaan.da, col = "blue", lwd = 2)
+
+plot(sisaan.da, type = "p",
+     main = "Plot Sisaan vs Waktu",
+     xlab = "Waktu", ylab = "Sisaan")
+
+acf(sisaan.da, main = "ACF Sisaan")
+
+pacf(sisaan.da, main = "PACF Sisaan")
+```
+
+Berdasarkan plot kuantil-kuantil normal, terlihat bahwa sisaan cenderung menyebar normal, hanya terdapat dua titik pencilan yang berjarak dari garis normal. Selain itu, lebar pita sebaran sisaan tampak seragam, yang mengindikasikan adanya homogenitas ragam. Sementara itu, plot ACF dan PACF sisaan dari model ARIMA(0,1,0) menunjukkan tidak adanya spike signifikan sehingga secara visual sisaan dapat dianggap saling bebas. Kondisi ini akan diuji lebih lanjut dengan uji formal.
+
+## Uji Formal
+
+### Sisaan Menyebar Normal
+
+```{r}
+shapiro.test(sisaan.da)
+```
+
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+Berdasarkan uji Shapiro-Wilk, didapat *p-value* sebesar 0.00058 yang kurang dari taraf nyata 5% sehingga tolak $H_0$ dan menandakan bahwa sisaan tidak menyebar normal.
+
+### Sisaan Saling Bebas
+
+```{r}
+Box.test(sisaan.da, type = "Ljung")
+```
+
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak tidak saling bebas
+
+Berdasarkan uji Ljung-Box, didapat *p-value* sebesar 0.8773 yang lebih besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan menandakan sisaan saling bebas.
+
+### Sisaan Homogen
+
+```{r}
+Box.test((sisaan.da)^2, type = "Ljung")  
+```
+
+$H_0$ : Ragam sisaan homogen
+
+$H_1$ : Ragam sisaan tidak homogen
+
+Berdasarkan uji Ljung-Box terhadap sisaan kuadrat tersebut, didapat *p-value* sebesar 0.7962 yang lebih besar dari taraf nyata 5% sehingga gagal tolak $H_0$ dan menandakan bahwa ragam sisaan homogen.
+
+### Nilai Tengah Sisaan Sama dengan Nol
+
+```{r}
+t.test(sisaan.da, mu = 0, conf.level = 0.95)
+```
+
+$H_0$ : Nilai tengah sisaan sama dengan nol
+
+$H_1$ : Nilai tengah sisaan tidak sama dengan nol
+
+Berdasarkan uji t, didapat *p-value* sebesar 0.8797 yang lebih besar dari taraf nyata 5% sehingga tak tolak $H_0$ dan menandakan bahwa nilai tengah sisaan sama dengan nol.
+
+# Overfitting
+
+Tahapan selanjutnya adalah *overfitting* yang dilakukan dengan menaikkan orde AR(p) dan MA(q) dari model ARIMA(0,1,0). Kandidat model *overfitting* adalah ARIMA(1,1,0) dan ARIMA(0,1,1). Namun, karena model hasil overfitting sudah termasuk di dalam model tentatif dan hasilnya tidak lebih baik, model terbaik yang dipilih adalah ARIMA(0,1,0).
+
+# Model Terbaik
+
+```{r}
+summary(model1.da)
+```
+
+Parameter yang diestimasi adalah varians error, yaitu $\sigma^2$ = 273.1 dengan standar deviasi error $\sigma$ = 16.53.
+
+# Peramalan
+
+```{r}
+ramalan.da <- forecast::forecast(model1.da, h = length(test.ts))
+data.ramalan.da <- ramalan.da$mean
+plot(ramalan.da)
+```
+
+```{r}
+ramalan.da<-forecast::forecast(model1.da, h = length(test.ts))
+hasil<-as.numeric(ramalan.da$mean)
+
+perbandingan.da<-cbind(Aktual = as.numeric(test.ts), Forecast = hasil)
+print(head(perbandingan.da, 10))   
+
+akurasi_test <- accuracy(hasil, test.ts)
+akurasi_test
+```
+
+```{r}
+ts.plot(data.ts, col = "black", lty = 1,
+        xlab = "Waktu", ylab = "Harga Emas")
+
+lines(168:(167+length(hasil)), hasil, col = "blue", lty = 2, lwd = 2)
+legend("topleft", 
+       legend = c("Data Aktual", "Forecast"),
+       col = c("black", "blue"),
+       lty = c(1,2), lwd = c(1,2), bty = "n")
+```
