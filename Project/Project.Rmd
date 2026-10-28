@@ -317,6 +317,7 @@ lmtest::coeftest(overfit_ar3_ma1)
 
 # Forecasting
 ```{r}
+panjang_test <- length(test_data) 
 ramalan_log <- predict(overfit_ma, n.ahead = panjang_test)
 aktual_asli <- as.numeric(test_data)
 prediksi_asli <- as.numeric(exp(ramalan_log$pred)) 
