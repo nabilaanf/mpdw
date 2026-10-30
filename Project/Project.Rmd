@@ -1,5 +1,5 @@
 ---
-title: "Project"
+title: "Analisis Tahunan"
 subtitle: "MPDW"
 author: "Nabila Nur Faizah"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
@@ -13,6 +13,7 @@ output:
 
 # Library/Packages
 ```{r}
+library(forecast)
 library(graphics)
 library(rio)
 library(ggplot2)
@@ -27,7 +28,7 @@ library(car)
 ```{r}
 data<-read.csv("D:/Kuliah/Semester 5/Metode Peramalan Deret Waktu/SN_d_tot_V2.0.csv", sep=";")
 colnames(data)<-c("Tahun", "Bulan", "Hari", "Desimal", "Sunspot", "SD", "Obs", "Def")
-data<- subset(data, Tahun > 1926 | (Tahun == 1926 & Bulan >= 1))
+data <- subset(data, (Tahun > 1926 | (Tahun == 1926 & Bulan >= 1)) & (Tahun < 2025 | (Tahun == 2025 & Bulan <= 12)))
 data
 ```
 ```{r}
@@ -40,20 +41,19 @@ colSums(is.na(data))
 plot(data$Desimal, data$Sunspot, 
      type = "l", col = "gray50", 
      xlab = "Tahun", ylab = "Sunspot", 
-     main = "Plot Data Mentah Sunspot (1926 - 2026)")
+     main = "Plot Data Mentah Sunspot (1926 - 2025)")
 ```
 ```{r}
 data_bulanan <- aggregate(Sunspot ~ Tahun + Bulan, data = data, FUN = mean)
 data_bulanan <- data_bulanan[order(data_bulanan$Tahun, data_bulanan$Bulan), ]
 ts_bulanan <- ts(data_bulanan$Sunspot, start = c(1926, 1), frequency = 12)
-ts_bulanan
 ```
 
 ```{r}
 plot(ts_bulanan, 
      type = "l", col = "black", lwd = 1.5,
      xlab = "Tahun", ylab = "Rata-rata Sunspot", 
-     main = "Data Bulanan Sunspot (Januari 1926 - September 2026)")
+     main = "Data Bulanan Sunspot (Januari 1926 - Desember 2025)")
 ```
 ```{r}
 data_tahunan <- aggregate(Sunspot ~ Tahun, data = data, FUN = mean)
@@ -61,12 +61,23 @@ ts_tahunan <- ts(data_tahunan$Sunspot, start = 1926, frequency = 1)
 plot(ts_tahunan, 
      type = "l", col = "black", lwd = 1.5,
      xlab = "Tahun", ylab = "Rata-rata Sunspot", 
-     main = "Data Tahunan Sunspot (Januari 1926 - September 2026)")
+     main = "Data Tahunan Sunspot (Januari 1926 - Desember 2025)")
 ```
 ```{r}
 dec_sunspot <- decompose(ts_bulanan, type = "additive")
 plot(dec_sunspot)
 ```
+```{r}
+seasonplot(ts_tahunan, 
+           s = 11, 
+           main = "Seasonal Plot of Sunspot (11-Year Cycle)", 
+           ylab = "Jumlah Sunspot",
+           xlab = "Tahun ke- dalam Siklus",
+           year.labels = TRUE, 
+           col = rainbow(10), 
+           pch = 19)
+```
+
 ```{r}
 monthplot(ts_bulanan, ylab = "Sunspot (ppm)", col = "darkblue", 
           main = "Monthplot Data Sunspot")
@@ -78,15 +89,6 @@ ggplot(data, aes(x = as.factor(Tahun), y = Sunspot)) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 8)) +
   labs(title = "Sebaran Sunspot Bulanan per Tahun",
        x = "Tahun",
-       y = "Jumlah Sunspot")
-```
-```{r}
-ggplot(data, aes(x = Bulan, y = Sunspot, group = Tahun, color = Tahun)) +
-  geom_line(alpha = 0.5) + 
-  scale_color_gradient(low = "blue", high = "red") + 
-  theme_minimal() +
-  labs(title = "Pola Musiman Sunspot (1926 - 2026)",
-       x = "Bulan (1-12)",
        y = "Jumlah Sunspot")
 ```
 
@@ -122,8 +124,8 @@ min(train_data)
 ## Uji Fligner-Killeen
 ```{r}
 data$Periode <- cut(data$Tahun, 
-                         breaks = c(1925, 1950, 1975, 2000, 2026), 
-                         labels = c("1926-1950", "1951-1975", "1976-2000", "2001-2026"))
+                         breaks = c(1925, 1950, 1975, 2000, 2025), 
+                         labels = c("1926-1950", "1951-1975", "1976-2000", "2001-2025"))
 
 fligner.test(Sunspot ~ Periode, data = data)
 ```
@@ -139,7 +141,7 @@ test_log <- log(test_data)
 plot.ts(train_log, type="l", col="black", main="Plot Data Log(Sunspot)")
 ```
 ```{r}
-aTSA::adf.test(train_log)
+adf.test(train_log)
 ```
 ```{r}
 df_log <- data.frame(
@@ -154,7 +156,7 @@ df_log$Periode <- cut(df_log$Tahun,
 fligner.test(Sunspot_Log ~ Periode, data = df_log)
 ```
 
-# Identifikasi Komponen Non-Seasonal dan Seasonal
+# Non-Seasonal
 ## ACF
 ```{r}
 acf(train_log, lag.max = 55)
@@ -164,41 +166,80 @@ acf(train_log, lag.max = 55)
 ```{r}
 pacf(train_log, lag.max = 55)
 ```
-Tanpa differencing karena stasioner dalam rataan (d=0) dan (D=0). PACF cut off, indikasi AR(2). ACF tails off, indikasi AR (p=2 atau p=3). Tidak ada indikasi MA (q=0). ACF turun perlahan di lag musiman dan kelipatannya, indikasi Seasonal AR (P=1), (s=11),(Q=0)
-# Seasonal (ga dipakai)
-## Differencing
+Tanpa differencing karena stasioner dalam rataan (d=0). PACF cut off, indikasi AR(2) (p=2). ACF tails off, indikasi MA(0) (q=0). 
+# Seasonal 
+## Lag 11
+### Differencing
 ```{r}
-D1 <- diff(train_data, lag = 11) 
+D1 <- diff(train_log, lag = 11) 
+plot.ts(D1, lty=1, xlab="Waktu", ylab="Data Difference Seasonal 1 Sunspot", main="Plot Difference Seasonal")
 ```
+Indikasi D=1, s=11.
+### ACF setelah differencing musiman
+```{r}
+acf(D1, lag.max = 55, main = "ACF Setelah Differencing Musiman 11")
+```
+ACF cut off setelah lag musiman, indikasi Seasonal MA (Q=1).
+### PACF setelah differencing
+```{r}
+pacf(D1, lag.max = 55, main = "PACF Setelah Differencing Musiman 11")
+```
+PACF tails off di lag musiman dan kelipatannya, indikasi Seasonal AR (P=1).
 
-## ACF setelah differencing musiman
+## Lag 5
+### Differencing
 ```{r}
-acf(D1, lag.max = 33, main = "ACF Setelah Differencing Musiman 11")
+D2 <- diff(train_log, lag = 5) 
+plot.ts(D2, lty=1, xlab="Waktu", ylab="Data Difference Seasonal 1 Sunspot", main="Plot Difference Seasonal")
 ```
-over-differencing
-## PACF setelah differencing
+### ACF setelah differencing
 ```{r}
-pacf(D1, lag.max = 33, main = "PACF Setelah Differencing Musiman 11")
+acf(D2, lag.max = 55, main = "ACF Setelah Differencing Musiman 5")
 ```
+### PACF setelah differencing
+```{r}
+pacf(D2, lag.max = 55, main = "PACF Setelah Differencing Musiman 5")
+```
+Indikasi P=1.
 
 # Kandidat Model
 ```{r}
-model1<-arima(train_log, order = c(3, 0, 0), seasonal = list(order = c(1, 0, 0), period = 11))
-model2<-arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 0, 0), period = 11))
-model3<-arima(train_log, order = c(3, 0, 0), seasonal = list(order = c(0, 0, 1), period = 11))
-model4<-arima(train_log, order = c(3, 0, 0), seasonal = list(order = c(1, 0, 1), period = 11))
-model5<-arima(train_log, order = c(3, 0, 0))
-model6<-arima(train_log, order = c(2, 0, 0))
+model1<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 1), period = 11))
+summary(model1)
+```
+```{r}
+model2<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 0), period = 11))
+summary(model2)
+```
+```{r}
+model3<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(0, 1, 1), period = 11))
+summary(model3)
+```
+```{r}
+model4<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 1), period = 5))
+summary(model4)
+```
+```{r}
+model5<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 0), period = 5))
+summary(model5)
+```
+```{r}
+model6<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(0, 1, 1), period = 5))
+summary(model6)
+```
+```{r}
+c(Model1 = AIC(model1), 
+  Model2 = AIC(model2), 
+  Model3 = AIC(model3), 
+  Model4 = AIC(model4),
+  Model5 = AIC(model5),
+  Model6 = AIC(model6))
+```
+```{r}
+model.auto.arima <- auto.arima(train_log)
+summary(model.auto.arima)
 ```
 
-```{r}
-c(Model1_AR3_SAR1 = AIC(model1), 
-  Model2_AR2_SAR1 = AIC(model2), 
-  Model3_AR3_SMA1 = AIC(model3), 
-  Model4_AR3_SAR1_SMA1 = AIC(model4),
-  Model5_AR3 = AIC(model5),
-  Model6_AR2 = AIC(model6))
-```
 # Pendugaan Parameter
 ```{r}
 lmtest::coeftest(model1)
@@ -218,10 +259,11 @@ lmtest::coeftest(model5)
 ```{r}
 lmtest::coeftest(model6)
 ```
+
 # Diagnostik Model
 ## Visual
 ```{r}
-sisaan <- residuals(model2)
+sisaan <- residuals(model5)
 plot(sisaan, main = "Data Log(Sunspot)", ylab = "Log", xlab = "Tahun")
 acf(sisaan, main = "ACF", lag.max = 55)
 pacf(sisaan, main = "PACF", lag.max = 55)
@@ -234,50 +276,72 @@ pacf(sisaan)
 ```
 ## Uji Formal
 ### Sisaan menyebar normal
-```{r}
-ks.test(sisaan,"pnorm")
-```
+
 ```{r}
 shapiro.test(sisaan)
 ```
+
 ```{r}
-nortest::ad.test(sisaan)
+fitted_log <- fitted(model5)
+fitted_asli <- exp(fitted_log)
+aktual_asli <- as.numeric(train_data) 
+sisaan_asli <- aktual_asli - fitted_asli
+shapiro.test(sisaan_asli)
 ```
-Sisaan tidak menyebar normal
+
 
 ### Sisaan saling bebas
 ```{r}
 Box.test(sisaan, type = "Ljung") 
 ```
-Sisaan saling bebas
+```{r}
+Box.test(sisaan_asli, type = "Ljung") 
+```
 
 ### Sisaan memiliki ragam homogen
 ```{r}
 Box.test((sisaan)^2, type = "Ljung")  
 ```
+```{r}
+Box.test((sisaan_asli)^2, type = "Ljung")  
+```
 ### Nilai harapan sama dengan nol
 ```{r}
 t.test(sisaan, mu = 0, conf.level = 0.95) 
 ```
-Nilai tengah sisaan sama dengan nol.
+```{r}
+t.test(sisaan_asli, mu = 0, conf.level = 0.95) 
+```
+
 
 # Overfitting
 ## Part 1
 ```{r}
-overfit_ar <- arima(train_log, order = c(3, 0, 0), seasonal = list(order = c(1, 0, 0), period = 11))
-overfit_ma <- arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 0, 0), period = 11))
-overfit_sar <- arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(2, 0, 0), period = 11))
-overfit_sma <- arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 0, 1), period = 11))
+overfit_ar <- arima(train_log, order = c(3, 0, 0), seasonal = list(order = c(1, 1, 0), period = 5))
+summary(overfit_ar)
 ```
 ```{r}
-c(Model_Awal = AIC(model2), 
+overfit_ma <- arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 0), period = 5))
+summary(overfit_ma)
+```
+```{r}
+overfit_sar <- arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(2, 1, 0), period = 5))
+summary(overfit_sar)
+```
+```{r}
+overfit_sma <- arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 1), period = 5))
+summary(overfit_sma)
+```
+
+```{r}
+c(Model_Awal = AIC(model5), 
   Overfit_AR3 = AIC(overfit_ar), 
   Overfit_MA1 = AIC(overfit_ma), 
   Overfit_SAR2 = AIC(overfit_sar), 
   Overfit_SMA1 = AIC(overfit_sma))
 ```
 ```{r}
-lmtest::coeftest(model2)
+lmtest::coeftest(model5)
 ```
 ```{r}
 lmtest::coeftest(overfit_ar)
@@ -288,65 +352,65 @@ lmtest::coeftest(overfit_ma)
 ```{r}
 lmtest::coeftest(overfit_sar)
 ```
-
 ```{r}
 lmtest::coeftest(overfit_sma)
 ```
 
-## Part 2
-```{r}
-overfit_ma2 <- arima(train_log, order = c(2, 0, 2), seasonal = list(order = c(1, 0, 0), period = 11))
-overfit_ar3_ma1 <- arima(train_log, order = c(3, 0, 1), seasonal = list(order = c(1, 0, 0), period = 11))
-
-c(Model_Baru_MA1 = AIC(overfit_ma), 
-  Overfit_MA2 = AIC(overfit_ma2), 
-  Overfit_AR3_MA1 = AIC(overfit_ar3_ma1))
-```
-```{r}
-lmtest::coeftest(overfit_ma)
-```
-```{r}
-lmtest::coeftest(overfit_ma2)
-```
-```{r}
-lmtest::coeftest(overfit_ar3_ma1)
-```
-
-
-
-
 # Forecasting
 ```{r}
-panjang_test <- length(test_data) 
-ramalan_log <- predict(overfit_ma, n.ahead = panjang_test)
-aktual_asli <- as.numeric(test_data)
-prediksi_asli <- as.numeric(exp(ramalan_log$pred)) 
-
-nilai_max <- max(c(aktual_asli, prediksi_asli), na.rm = TRUE)
-
-plot(aktual_asli, type = "l", col = "black", lwd = 2,
-     main = "Perbandingan Aktual vs Peramalan Sunspot",
-     ylab = "Jumlah Sunspot", xlab = "Tahun (Data Uji)",
-     ylim = c(0, nilai_max + 30))
-
-lines(x = 1:length(prediksi_asli), y = prediksi_asli, col = "blue", lwd = 2, lty = 2)
-
-legend("topright", legend = c("Aktual", "Prediksi Model"),
-       col = c("black", "blue"), lty = c(1, 2), lwd = 2)
+ramalan_sarima = forecast::forecast(model5, 20)
+ramalan_sarima
 ```
 ```{r}
-error <- aktual_asli - prediksi_asli
-rmse <- sqrt(mean(error^2))
-mae <- mean(abs(error))
-mape <- mean(abs(error / aktual_asli)) * 100
+prediksi_asli <- exp(ramalan_sarima$mean)
+batas_bawah_asli <- exp(ramalan_sarima$lower[, 2]) 
+batas_atas_asli <- exp(ramalan_sarima$upper[, 2])  
 
-cat("Hasil Evaluasi Peramalan:\n")
-cat("RMSE :", rmse, "\n")
-cat("MAE  :", mae, "\n")
-cat("MAPE :", mape, "%\n")
+prediksi_asli
+```
+```{r}
+tahun_awal <- 1926
+tahun_akhir_historis <- 2005 
+tahun_akhir_ramalan <- tahun_akhir_historis + length(ramalan_sarima$mean)
+
+prediksi_asli <- exp(ramalan_sarima$mean)
+batas_bawah   <- exp(ramalan_sarima$lower[, 2])
+batas_atas    <- exp(ramalan_sarima$upper[, 2])
+
+plot(ts_sunspot, type = "l", col = "black", lwd = 1.5,
+     xlim = c(tahun_awal, tahun_akhir_ramalan),
+     ylim = c(0, max(ts_sunspot, batas_atas) + 30),
+     main = "Peramalan Sunspot (1926 - Masa Depan)",
+     xlab = "Tahun", ylab = "Jumlah Sunspot")
+
+tahun_ramalan <- (tahun_akhir_historis + 1):tahun_akhir_ramalan
+
+polygon(c(tahun_ramalan, rev(tahun_ramalan)),
+        c(batas_bawah, rev(batas_atas)),
+        col = rgb(0, 0, 1, 0.2), border = NA)
+
+lines(tahun_ramalan, prediksi_asli, col = "blue", lwd = 2, lty = 2)
+
+abline(v = tahun_akhir_historis, col = "red", lty = 3, lwd = 2)
+
+legend("topleft", 
+       legend = c("Data Aktual", "Prediksi", "Batas 95%", "Akhir Data Train"),
+       col = c("black", "blue", "blue", "red"), 
+       lty = c(1, 2, 1, 3), lwd = c(1.5, 2, 10, 2),
+       fill = c(NA, NA, rgb(0,0,1,0.2), NA), border = NA, bty = "n")
 ```
 
+```{r}
+accuracy(prediksi_asli,test_data)
+```
+```{r}
+aktual_test <- as.numeric(test_data)
+prediksi_test <- as.numeric(prediksi_asli)
+mae_model <- mean(abs(aktual_test - prediksi_test))
+naive_errors <- diff(as.numeric(train_data))
+mae_naive <- mean(abs(naive_errors))
+mase <- mae_model / mae_naive
 
-
-
+cat("MASE :", mase, "\n")
+```
 
