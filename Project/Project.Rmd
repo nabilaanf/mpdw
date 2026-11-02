@@ -1,7 +1,7 @@
 ---
 title: "Analisis Tahunan"
 subtitle: "MPDW"
-author: "Nabila Nur Faizah"
+author: "kel4"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output:
   html_document:
@@ -141,7 +141,7 @@ test_log <- log(test_data)
 plot.ts(train_log, type="l", col="black", main="Plot Data Log(Sunspot)")
 ```
 ```{r}
-adf.test(train_log)
+tseries::adf.test(train_log)
 ```
 ```{r}
 df_log <- data.frame(
@@ -179,12 +179,12 @@ Indikasi D=1, s=11.
 ```{r}
 acf(D1, lag.max = 55, main = "ACF Setelah Differencing Musiman 11")
 ```
-ACF cut off setelah lag musiman, indikasi Seasonal MA (Q=1).
+ACF cut off setelah lag musiman, indikasi Seasonal MA (Q=1 atau Q=0). Indikasi q=1.
 ### PACF setelah differencing
 ```{r}
 pacf(D1, lag.max = 55, main = "PACF Setelah Differencing Musiman 11")
 ```
-PACF tails off di lag musiman dan kelipatannya, indikasi Seasonal AR (P=1).
+PACF tails off di lag musiman dan kelipatannya, indikasi Seasonal AR (P=1). Indikasi p=1 atau p=2.
 
 ## Lag 5
 ### Differencing
@@ -196,6 +196,8 @@ plot.ts(D2, lty=1, xlab="Waktu", ylab="Data Difference Seasonal 1 Sunspot", main
 ```{r}
 acf(D2, lag.max = 55, main = "ACF Setelah Differencing Musiman 5")
 ```
+Hasil differencing berkali2 tetap membuat ACF di lag 5 dan kelipatannya melewati garis putus.
+
 ### PACF setelah differencing
 ```{r}
 pacf(D2, lag.max = 55, main = "PACF Setelah Differencing Musiman 5")
@@ -204,36 +206,36 @@ Indikasi P=1.
 
 # Kandidat Model
 ```{r}
-model1<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 1), period = 11))
+model1<-Arima(train_log, order = c(1, 0, 0), seasonal = list(order = c(1, 1, 0), period = 11))
 summary(model1)
 ```
 ```{r}
-model2<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 0), period = 11))
+model2<-Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 0), period = 11))
 summary(model2)
 ```
 ```{r}
-model3<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(0, 1, 1), period = 11))
+model3<-Arima(train_log, order = c(0, 0, 1), seasonal = list(order = c(0, 1, 1), period = 11))
 summary(model3)
 ```
 ```{r}
-model4<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 1), period = 5))
+model4<-Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 1), period = 11))
 summary(model4)
 ```
 ```{r}
-model5<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(1, 1, 0), period = 5))
+model5<-Arima(train_log, order = c(1, 0, 1), seasonal = list(order = c(0, 1, 1), period = 11))
 summary(model5)
 ```
 ```{r}
-model6<-Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(0, 1, 1), period = 5))
+model6<-Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(0, 1, 1), period = 11))
 summary(model6)
 ```
 ```{r}
-c(Model1 = AIC(model1), 
-  Model2 = AIC(model2), 
-  Model3 = AIC(model3), 
-  Model4 = AIC(model4),
-  Model5 = AIC(model5),
-  Model6 = AIC(model6))
+data.frame(
+  Model = c("Model1", "Model2", "Model3", "Model4", "Model5", "Model6"),
+  AIC  = c(model1$aic, model2$aic, model3$aic, model4$aic, model5$aic, model6$aic),
+  AICc = c(model1$aicc, model2$aicc, model3$aicc, model4$aicc, model5$aicc, model6$aicc),
+  BIC  = c(model1$bic, model2$bic, model3$bic, model4$bic, model5$bic, model6$bic)
+)
 ```
 ```{r}
 model.auto.arima <- auto.arima(train_log)
@@ -259,11 +261,13 @@ lmtest::coeftest(model5)
 ```{r}
 lmtest::coeftest(model6)
 ```
-
+```{r}
+lmtest::coeftest(model.auto.arima)
+```
 # Diagnostik Model
 ## Visual
 ```{r}
-sisaan <- residuals(model5)
+sisaan <- residuals(model6)
 plot(sisaan, main = "Data Log(Sunspot)", ylab = "Log", xlab = "Tahun")
 acf(sisaan, main = "ACF", lag.max = 55)
 pacf(sisaan, main = "PACF", lag.max = 55)
@@ -282,28 +286,39 @@ shapiro.test(sisaan)
 ```
 
 ```{r}
-fitted_log <- fitted(model5)
+fitted_log <- fitted(model6)
 fitted_asli <- exp(fitted_log)
 aktual_asli <- as.numeric(train_data) 
 sisaan_asli <- aktual_asli - fitted_asli
 shapiro.test(sisaan_asli)
 ```
+```{r}
+lambda_optimal <- BoxCox.lambda(train_data) 
+print(lambda_optimal) 
+
+model_boxcox <- Arima(train_data, 
+                      order = c(1,0,1), 
+                      seasonal = list(order = c(0,1,1), period = 11),
+                      lambda = lambda_optimal) 
+
+shapiro.test(residuals(model_boxcox))
+```
 
 
 ### Sisaan saling bebas
 ```{r}
-Box.test(sisaan, type = "Ljung") 
+Box.test(sisaan, type = "Ljung", lag=22) 
 ```
 ```{r}
-Box.test(sisaan_asli, type = "Ljung") 
+Box.test(sisaan_asli, type = "Ljung", lag=22) 
 ```
 
 ### Sisaan memiliki ragam homogen
 ```{r}
-Box.test((sisaan)^2, type = "Ljung")  
+Box.test((sisaan)^2, type = "Ljung", lag=22)  
 ```
 ```{r}
-Box.test((sisaan_asli)^2, type = "Ljung")  
+Box.test((sisaan_asli)^2, type = "Ljung", lag=22)  
 ```
 ### Nilai harapan sama dengan nol
 ```{r}
@@ -315,33 +330,32 @@ t.test(sisaan_asli, mu = 0, conf.level = 0.95)
 
 
 # Overfitting
-## Part 1
 ```{r}
-overfit_ar <- Arima(train_log, order = c(3, 0, 0), seasonal = list(order = c(1, 1, 0), period = 5))
+overfit_ar <- Arima(train_log, order = c(3, 0, 1), seasonal = list(order = c(0, 1, 1), period = 11))
 summary(overfit_ar)
 ```
 ```{r}
-overfit_ma <- Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 0), period = 5))
+overfit_ma <- Arima(train_log, order = c(2, 0, 2), seasonal = list(order = c(0, 1, 1), period = 11))
 summary(overfit_ma)
 ```
 ```{r}
-overfit_sar <- Arima(train_log, order = c(2, 0, 0), seasonal = list(order = c(2, 1, 0), period = 5))
+overfit_sar <- Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 1), period = 11))
 summary(overfit_sar)
 ```
 ```{r}
-overfit_sma <- Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(1, 1, 1), period = 5))
+overfit_sma <- Arima(train_log, order = c(2, 0, 1), seasonal = list(order = c(0, 1, 2), period = 11))
 summary(overfit_sma)
 ```
 
 ```{r}
-c(Model_Awal = AIC(model5), 
+c(Model_Awal = AIC(model6), 
   Overfit_AR3 = AIC(overfit_ar), 
   Overfit_MA1 = AIC(overfit_ma), 
   Overfit_SAR2 = AIC(overfit_sar), 
   Overfit_SMA1 = AIC(overfit_sma))
 ```
 ```{r}
-lmtest::coeftest(model5)
+lmtest::coeftest(model6)
 ```
 ```{r}
 lmtest::coeftest(overfit_ar)
@@ -358,7 +372,7 @@ lmtest::coeftest(overfit_sma)
 
 # Forecasting
 ```{r}
-ramalan_sarima = forecast::forecast(model5, 20)
+ramalan_sarima = forecast::forecast(model6, 20)
 ramalan_sarima
 ```
 ```{r}
@@ -368,10 +382,11 @@ batas_atas_asli <- exp(ramalan_sarima$upper[, 2])
 
 prediksi_asli
 ```
+# Plot Log
 ```{r}
 autoplot(ramalan_sarima, col="blue")
 ```
-
+# Plot asli
 ```{r}
 tahun_awal <- 1926
 tahun_akhir_historis <- 2005 
@@ -450,10 +465,86 @@ korelasi <- cor(aktual_test, prediksi_test)
 cat("Korelasi :", korelasi, "\n")
 ```
 ```{r}
-naive_seasonal_errors <- diff(as.numeric(train_data), lag = 5)
+naive_seasonal_errors <- diff(as.numeric(train_data), lag = 11)
 mae_naive_seasonal <- mean(abs(naive_seasonal_errors))
 
 mase_seasonal <- mae_model / mae_naive_seasonal
 cat("MASE (Seasonal Naive) :", mase_seasonal, "\n")
+```
+# Model TBATS
+## Model pertama
+```{r}
+model_tbats <- tbats(
+  y = train_data, 
+  seasonal.periods = 11
+)
+
+summary(model_tbats)
+
+```
+```{r}
+model_tbats
+```
+
+
+```{r}
+ramalan_tbats <- forecast::forecast(model_tbats, h = 20)
+ramalan_tbats
+```
+
+
+```{r}
+plot(ramalan_tbats, main = "Peramalan TBATS untuk Sunspot Tahunan")
+lines(test_data, col = "red") 
+```
+```{r}
+accuracy(ramalan_tbats, test_data)
+```
+```{r}
+sisaan_tbats<-residuals(model_tbats)
+plot(sisaan_tbats, main = "Plot Sisaan TBATS", ylab = "Error")
+acf(sisaan_tbats, lag.max = 60, main = "ACF Sisaan TBATS")
+```
+```{r}
+shapiro.test(sisaan_tbats)
+```
+
+```{r}
+t.test(sisaan_tbats, mu = 0)
+```
+```{r}
+Box.test(sisaan_tbats, type = "Ljung-Box", lag=22)
+```
+```{r}
+Box.test((sisaan_tbats)^2, type = "Ljung", lag=22)  
+```
+```{r}
+checkresiduals(model_tbats)
+```
+## Model kedua
+```{r}
+model_tbats_coba <- tbats(train_data, seasonal.periods = c(11, 5.5))
+checkresiduals(model_tbats_coba)
+sisaan_coba<-residuals(model_tbats_coba)
+shapiro.test(sisaan_coba)
+t.test(sisaan_coba, mu=0)
+Box.test(sisaan_coba, lag=22, type = "Ljung-Box")
+Box.test(sisaan_coba, lag=11, type="Ljung-Box")
+Box.test((sisaan_coba)^2, lag=22, type="Ljung")
+Box.test((sisaan_coba)^2, lag=11, type="Ljung")
+```
+## Perbandingan
+```{r}
+ramalan_A <- forecast::forecast(model_tbats, h = length(test_data))
+akurasi_A <- accuracy(ramalan_A, test_data)
+
+ramalan_B <- forecast::forecast(model_tbats_coba, h = length(test_data))
+akurasi_B <- accuracy(ramalan_B, test_data)
+
+cat("=== MODEL A (s=11) ===\n")
+print(akurasi_A[2, c("RMSE", "MAE", "MASE")])
+
+cat("\n=== MODEL B (s=11 dan 5.5) ===\n")
+print(akurasi_B[2, c("RMSE", "MAE", "MASE")])
 ```
 
