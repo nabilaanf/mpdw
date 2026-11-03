@@ -27,6 +27,12 @@ library(car)
 ```{r}
 data<-read.csv("D:/Kuliah/Semester 5/Metode Peramalan Deret Waktu/SN_d_tot_V2.0.csv", sep=";")
 colnames(data)<-c("Tahun", "Bulan", "Hari", "Desimal", "Sunspot", "SD", "Obs", "Def")
+data %>%
+  filter(Tahun >= 1900) %>%
+  group_by(Tahun) %>%
+  summarise(peak = max(Sunspot, na.rm = TRUE)) %>%
+  filter(peak > 0) %>%
+  print(n=125)
 data <- subset(data, (Tahun > 1970 | (Tahun == 1970 & Bulan >= 1)) & (Tahun < 2025 | (Tahun == 2025 & Bulan <= 12)))
 data
 ```
@@ -662,4 +668,7 @@ tabel_ic <- data.frame(
 print(tabel_ic)
 ```
 
+```{r}
+
+```
 

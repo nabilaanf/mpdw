@@ -8,7 +8,6 @@ output:
     toc: true
     toc_depth: 3
     toc_float: true
-    number_sections: true
 ---
 
 # Library/Packages
@@ -548,3 +547,247 @@ cat("\n=== MODEL B (s=11 dan 5.5) ===\n")
 print(akurasi_B[2, c("RMSE", "MAE", "MASE")])
 ```
 
+# Model Fourier
+```{r}
+buat_fourier <- function(waktu, periode = 11, K = 2) {
+  hasil <- matrix(nrow = length(waktu), ncol = 2 * K)
+  for (k in 1:K) {
+    hasil[, 2*k-1] <- sin(2 * pi * k * waktu / periode)
+    hasil[, 2*k]   <- cos(2 * pi * k * waktu / periode)
+  }
+  colnames(hasil) <- paste0(rep(c("sin", "cos"), K), rep(1:K, each = 2))
+  return(hasil)
+}
+
+waktu_train <- seq_along(train_data)
+waktu_test  <- length(train_data) + seq_along(test_data)
+
+fourier_train_k1 <- buat_fourier(waktu_train, periode = 11, K = 1)
+fourier_test_k1  <- buat_fourier(waktu_test,  periode = 11, K = 1)
+
+fourier_train_k2 <- buat_fourier(waktu_train, periode = 11, K = 2)
+fourier_test_k2  <- buat_fourier(waktu_test,  periode = 11, K = 2)
+```
+
+```{r}
+model_fourier_k1 <- auto.arima(
+  train_data, 
+  xreg = fourier_train_k1, 
+  seasonal = FALSE,     
+  stepwise = FALSE, 
+  approximation = FALSE
+)
+summary(model_fourier_k1)
+```
+```{r}
+model_fourier_k2 <- auto.arima(
+  train_data, 
+  xreg = fourier_train_k2, 
+  seasonal = FALSE, 
+  stepwise = FALSE, 
+  approximation = FALSE
+)
+summary(model_fourier_k2)
+```
+```{r}
+ramalan_fourier_k1 <- forecast::forecast(model_fourier_k1, h = length(test_data), xreg = fourier_test_k1)
+ramalan_fourier_k2 <- forecast::forecast(model_fourier_k2, h = length(test_data), xreg = fourier_test_k2)
+```
+```{r}
+akurasi_train_f1 <- accuracy(model_fourier_k1)
+akurasi_train_f2 <- accuracy(model_fourier_k2)
+akurasi_test_f1 <- accuracy(ramalan_fourier_k1, test_data)
+akurasi_test_f2 <- accuracy(ramalan_fourier_k2, test_data)
+
+akurasi_test_f1
+akurasi_test_f2
+```
+```{r}
+sisaan_fourier <- residuals(model_fourier_k2)
+checkresiduals(model_fourier_k2)
+Box.test(sisaan_fourier, type = "Ljung-Box", lag = 22)
+shapiro.test(sisaan_fourier)
+t.test(sisaan_fourier, mu = 0)
+Box.test((sisaan_fourier)^2, type = "Ljung-Box", lag = 22)
+```
+
+# Model Seasonal Naive
+```{r}
+ramalan_snaive <- snaive(train_data, h = length(test_data))
+
+akurasi_snaive <- accuracy(ramalan_snaive, test_data)
+print(akurasi_snaive["Test set", c("RMSE", "MAE", "MASE")])
+```
+# Model ETS
+```{r}
+train_ts11 <- ts(train_data, frequency = 11)
+
+model_ets <- tryCatch({
+  ets(train_ts11, model = "ZZZ")
+}, error = function(e) {
+  cat("ETS ZZZ gagal, beralih ke model AAA (Additive)...\n")
+  ets(train_ts11, model = "AAA")
+})
+summary(model_ets)
+```
+```{r}
+ramalan_ets <- forecast::forecast(model_ets, h = length(test_data))
+pred_ets <- as.numeric(ramalan_ets$mean)
+
+aktual_test <- as.numeric(test_data)
+naive_err_seasonal <- mean(abs(diff(as.numeric(train_data), lag = 11)))
+
+err_ets <- aktual_test - pred_ets
+rmse_ets <- sqrt(mean(err_ets^2))
+mae_ets  <- mean(abs(err_ets))
+mase_ets <- mae_ets / naive_err_seasonal
+
+rmse_ets
+mae_ets
+mase_ets
+```
+```{r}
+sisaan_ets <- residuals(model_ets)
+checkresiduals(model_ets)
+shapiro.test(sisaan_ets)
+Box.test(sisaan_ets, type = "Ljung-Box", lag = 22)
+t.test(sisaan_ets, mu = 0)
+Box.test((sisaan_ets)^2, type = "Ljung-Box", lag = 22)
+```
+
+# Perbandingan Data Training
+```{r}
+model6_asli <- Arima(train_data, 
+                     order = c(2, 0, 1), 
+                     seasonal = list(order = c(0, 1, 1), period = 11))
+
+get_ic <- function(model, name) {
+  if (inherits(model, "tbats")) {
+    n <- length(model$y)           
+    k <- length(coef(model))       
+    AIC_val <- model$AIC            
+    AICc_val <- AIC_val + (2 * k * (k + 1)) / (n - k - 1)
+    logLik_val <- (2 * k - AIC_val) / 2   
+    BIC_val  <- -2 * logLik_val + k * log(n)
+  } else {
+    AIC_val  <- model$aic
+    AICc_val <- model$aicc
+    BIC_val  <- model$bic
+  }
+  
+  data.frame(Model = name, AIC = AIC_val, AICc = AICc_val, BIC = BIC_val)
+}
+
+tabel_train <- rbind(
+  get_ic(model6_asli,       "SARIMA (Model 6 - Asli)"),
+  get_ic(model_ets,         "ETS (Auto)"),
+  get_ic(model_tbats,       "TBATS (s=11)"),
+  get_ic(model_tbats_coba,  "TBATS (s=11 & 5.5)"),
+  get_ic(model_fourier_k1,  "Fourier K=1"),
+  get_ic(model_fourier_k2,  "Fourier K=2")
+)
+
+tabel_train <- tabel_train[order(tabel_train$AICc), ]
+tabel_train[, 2:4] <- round(tabel_train[, 2:4], 2)
+rownames(tabel_train) <- NULL
+
+print(tabel_train)
+```
+# Perbandingan Data Testing
+```{r}
+pred_snaive <- as.numeric(ramalan_snaive$mean)
+pred_ets    <- as.numeric(ramalan_ets$mean)
+pred_sarima <- as.numeric(prediksi_asli)
+pred_A      <- as.numeric(ramalan_A$mean)
+pred_B      <- as.numeric(ramalan_B$mean)
+pred_f1     <- as.numeric(ramalan_fourier_k1$mean)
+pred_f2     <- as.numeric(ramalan_fourier_k2$mean)
+
+aktual_test <- as.numeric(test_data)
+naive_err_seasonal <- mean(abs(diff(as.numeric(train_data), lag = 11)))
+
+hitung_metrik <- function(prediksi, aktual, denom_mase) {
+  err <- aktual - prediksi
+  rmse <- sqrt(mean(err^2))
+  mae  <- mean(abs(err))
+  mase <- mae / denom_mase
+  return(c(RMSE = rmse, MAE = mae, MASE = mase))
+}
+
+metrik_sn <- hitung_metrik(pred_snaive, aktual_test, naive_err_seasonal)
+metrik_s  <- hitung_metrik(pred_sarima, aktual_test, naive_err_seasonal)
+metrik_e  <- hitung_metrik(pred_ets,    aktual_test, naive_err_seasonal)
+metrik_A  <- hitung_metrik(pred_A,      aktual_test, naive_err_seasonal)
+metrik_B  <- hitung_metrik(pred_B,      aktual_test, naive_err_seasonal)
+metrik_f1 <- hitung_metrik(pred_f1,     aktual_test, naive_err_seasonal)
+metrik_f2 <- hitung_metrik(pred_f2,     aktual_test, naive_err_seasonal)
+
+tabel_test <- data.frame(
+  Model = c("Seasonal Naive (Baseline)", "SARIMA (Model 6)", "ETS (Auto)", 
+            "TBATS (s=11)", "TBATS (s=11 & 5.5)", "Fourier K=1", "Fourier K=2"),
+  RMSE  = round(c(metrik_sn["RMSE"], metrik_s["RMSE"], metrik_e["RMSE"], 
+                  metrik_A["RMSE"], metrik_B["RMSE"], metrik_f1["RMSE"], metrik_f2["RMSE"]), 2),
+  MAE   = round(c(metrik_sn["MAE"], metrik_s["MAE"], metrik_e["MAE"], 
+                  metrik_A["MAE"], metrik_B["MAE"], metrik_f1["MAE"], metrik_f2["MAE"]), 2),
+  MASE  = round(c(metrik_sn["MASE"], metrik_s["MASE"], metrik_e["MASE"], 
+                  metrik_A["MASE"], metrik_B["MASE"], metrik_f1["MASE"], metrik_f2["MASE"]), 4)
+)
+
+tabel_test <- tabel_test[order(tabel_test$MASE), ]
+rownames(tabel_test) <- NULL
+
+print(tabel_test)
+```
+
+
+# Perbandingan Diagnostik dan Signifikansi
+```{r}
+ekstrak_diagnostik_tahunan <- function(model, name) {
+  if (inherits(model, "tbats")) {
+    total_par <- length(model$lambda) + length(model$alpha) + length(model$beta) + 
+                 length(model$damping.parameter) + length(model$gamma.one.values) + 
+                 length(model$gamma.two.values) + length(model$ar.coefficients) + 
+                 length(model$ma.coefficients) + 2 * sum(model$k.vector)
+  } else {
+    total_par <- length(coef(model))
+  }
+  
+  sig_par <- NA 
+  if (inherits(model, "Arima")) {
+    p_vals <- lmtest::coeftest(model)[, 4]
+    sig_par <- sum(p_vals < 0.05, na.rm = TRUE)
+  }
+  
+  sisaan <- residuals(model)
+  
+  lb_p <- Box.test(sisaan, lag = 22, type = "Ljung-Box")$p.value
+  shapiro_p <- tryCatch(shapiro.test(sisaan)$p.value, error = function(e) NA)
+  arch_p <- Box.test((sisaan)^2, lag = 22, type = "Ljung-Box")$p.value
+  ttest_p <- tryCatch(t.test(sisaan, mu = 0)$p.value, error = function(e) NA)
+  
+  data.frame(
+    Model = name,
+    Total_Par = total_par,
+    Signifikan = sig_par,
+    LB = lb_p,
+    Shapiro = shapiro_p,
+    ARCH = arch_p,
+    T_Test = ttest_p
+  )
+}
+
+tabel_diag_tahunan <- rbind(
+  ekstrak_diagnostik_tahunan(model6,           "SARIMA (Model 6 - Log)"),
+  ekstrak_diagnostik_tahunan(model_tbats,      "TBATS (s=11)"),
+  ekstrak_diagnostik_tahunan(model_tbats_coba, "TBATS (11 & 5.5)"),
+  ekstrak_diagnostik_tahunan(model_ets,        "ETS (Auto)"),
+  ekstrak_diagnostik_tahunan(model_fourier_k1, "Fourier K=1"),
+  ekstrak_diagnostik_tahunan(model_fourier_k2, "Fourier K=2")
+)
+
+cols_to_round <- c("LB", "Shapiro", "ARCH", "T_Test")
+tabel_diag_tahunan[cols_to_round] <- round(tabel_diag_tahunan[cols_to_round], 3)
+
+print(tabel_diag_tahunan)
+```
+ETS melanggar asumsi galat saling bebas. SARIMA melanggar asumsi galat menyebar normal. TBATS (s=11) melanggar asumsi galat saling bebas. TBATS (s=11 & 5.5) melanggar asumsi galat saling bebas di dua kali siklus 5.5. Fourier K=2 memenuhi semua asumsi galat. 
