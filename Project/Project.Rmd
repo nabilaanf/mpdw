@@ -1402,7 +1402,7 @@ ggplot() +
   theme_minimal() +
   theme(legend.position = "none")
 ```
-# Plot Tiga Model
+# Perbandingan SARIMA dan ETS-ARIMA Hybrid
 ```{r}
 annual <- data.frame(
   Year    = c(as.numeric(time(train_data)), as.numeric(time(test_data))),
@@ -1411,24 +1411,23 @@ annual <- data.frame(
 
 yrs_test <- as.numeric(time(test_data))
 
-preds_3 <- list(
-  "SARIMA + dummy + iGARCH"  = as.numeric(pred_sarima_dummy),
-  "ETS-ARIMA hybrid"         = as.numeric(pred_ets_hybrid),
-  "Fourier K=2"              = as.numeric(ramalan_fourier_k2$mean)
+preds_2 <- list(
+  "SARIMA(2,0,1)(0,1,1)[11]" = as.numeric(prediksi_asli), 
+  "ETS-ARIMA hybrid"         = as.numeric(pred_ets_hybrid)
 )
 
-long_3 <- do.call(rbind, lapply(names(preds_3), function(nm)
-  data.frame(Year = yrs_test, Model = nm, Nilai = preds_3[[nm]])))
+long_2 <- do.call(rbind, lapply(names(preds_2), function(nm)
+  data.frame(Year = yrs_test, Model = nm, Nilai = preds_2[[nm]])))
 
 dh <- subset(data.frame(Year = annual$Year, Nilai = annual$Sunspot), Year >= 1990)
 
 ggplot() +
   geom_line(data = dh,     aes(Year, Nilai), linewidth = 1.2, color = "black") +
-  geom_line(data = long_3, aes(Year, Nilai, color = Model), linewidth = 0.9) +
+  geom_line(data = long_2, aes(Year, Nilai, color = Model), linewidth = 0.9) +
   geom_vline(xintercept = max(as.numeric(time(train_data))),
              linetype = "dotted", color = "red") +
-  labs(title    = "Perbandingan 3 Model dengan Asumsi Lengkap Terpenuhi",
-       subtitle = "Garis hitam = aktual; garis berwarna = prediksi",
+  labs(title    = "SARIMA(2,0,1)(0,1,1)[11] vs ETS-ARIMA hybrid",
+       subtitle = "Garis hitam = aktual; garis berwarna = prediksi (2006–2025)",
        x = "Tahun", y = "Sunspot", color = NULL) +
   theme_minimal(base_size = 11) +
   theme(legend.position = "bottom")
@@ -1436,13 +1435,13 @@ ggplot() +
 ```{r}
 ggplot() +
   geom_line(data = dh,     aes(Year, Nilai), linewidth = 1, color = "black") +
-  geom_line(data = long_3, aes(Year, Nilai, color = Model), linewidth = 0.9) +
+  geom_line(data = long_2, aes(Year, Nilai, color = Model), linewidth = 0.9) +
   geom_vline(xintercept = max(as.numeric(time(train_data))),
              linetype = "dotted", color = "red") +
-  facet_wrap(~ Model, ncol = 1) +
-  labs(title = "Prediksi 3 Model Asumsi Lengkap vs Aktual",
+  facet_wrap(~ Model, ncol = 2) +
+  labs(title = "SARIMA(2,0,1)(0,1,1)[11] vs ETS-ARIMA hybrid",
        x = "Tahun", y = "Sunspot") +
-  theme_minimal() +
+  theme_minimal(base_size = 11) +
   theme(legend.position = "none")
 ```
 ```{r}
@@ -1451,59 +1450,48 @@ annual <- data.frame(
   Sunspot = c(as.numeric(train_data), as.numeric(test_data))
 )
 
-years_train <- as.numeric(time(train_data))   
-years_test  <- as.numeric(time(test_data))    
+years_train <- as.numeric(time(train_data))
+years_test  <- as.numeric(time(test_data))
 
-
-fitted_sarima <- exp(as.numeric(fitted(model6_dummy)))
-
+fitted_sarima    <- exp(as.numeric(fitted(model6)))           
 fitted_ets_arima <- as.numeric(fitted(model_ets)) + 
-                    as.numeric(fitted(model_res_ets_v5))
+                    as.numeric(fitted(model_res_ets_v5))     
 
-fitted_f2 <- as.numeric(fitted(model_fourier_k2))
-
-fc_sarima   <- as.numeric(pred_sarima_dummy)
-fc_ets_arm  <- as.numeric(pred_ets_hybrid)
-fc_f2       <- as.numeric(ramalan_fourier_k2$mean)
+fc_sarima   <- as.numeric(prediksi_asli)      
+fc_ets_arm  <- as.numeric(pred_ets_hybrid)   
 
 long_fit <- rbind(
-  data.frame(Year = years_train, Model = "SARIMA + dummy + iGARCH",
+  data.frame(Year = years_train, Model = "SARIMA(2,0,1)(0,1,1)[11]",
              Nilai = fitted_sarima,    Type = "Fitted"),
   data.frame(Year = years_train, Model = "ETS-ARIMA hybrid",
-             Nilai = fitted_ets_arima, Type = "Fitted"),
-  data.frame(Year = years_train, Model = "Fourier K=2",
-             Nilai = fitted_f2,        Type = "Fitted")
+             Nilai = fitted_ets_arima, Type = "Fitted")
 )
 
 long_fc <- rbind(
-  data.frame(Year = years_test, Model = "SARIMA + dummy + iGARCH",
+  data.frame(Year = years_test, Model = "SARIMA(2,0,1)(0,1,1)[11]",
              Nilai = fc_sarima,  Type = "Forecast"),
   data.frame(Year = years_test, Model = "ETS-ARIMA hybrid",
-             Nilai = fc_ets_arm, Type = "Forecast"),
-  data.frame(Year = years_test, Model = "Fourier K=2",
-             Nilai = fc_f2,      Type = "Forecast")
+             Nilai = fc_ets_arm, Type = "Forecast")
 )
 
 long_all <- rbind(long_fit, long_fc)
 
 ggplot() +
   geom_line(data = annual, aes(Year, Sunspot),
-            linewidth = 1.1, color = "black", alpha = 0.75) +
+            linewidth = 1.1, color = "black", alpha = 0.7) +
   geom_line(data = long_all,
             aes(Year, Nilai, color = Model, linetype = Type),
-            linewidth = 0.8) +
+            linewidth = 0.85) +
   geom_vline(xintercept = max(years_train),
              linetype = "dotted", color = "red", linewidth = 0.8) +
-  facet_wrap(~ Model, ncol = 1) +
   scale_linetype_manual(
     values = c("Fitted" = "solid", "Forecast" = "dashed"),
     labels = c("Fitted (in-sample 1926–2005)",
                "Forecast (out-of-sample 2006–2025)")
   ) +
-  scale_x_continuous(breaks = seq(1925, 2025, by = 10)) +
   labs(
-    title    = "Perbandingan 3 Model Asumsi Lengkap (1926–2025)",
-    subtitle = "Garis hitam = aktual; solid = fitted in-sample; dashed = forecast out-of-sample; merah = batas training/testing",
+    title    = "SARIMA(2,0,1)(0,1,1)[11] vs ETS-ARIMA hybrid (1926–2025)",
+    subtitle = "Hitam = aktual; solid = fitted; dashed = forecast; merah = batas training/testing",
     x = "Tahun", y = "Sunspot",
     color = NULL, linetype = NULL
   ) +
