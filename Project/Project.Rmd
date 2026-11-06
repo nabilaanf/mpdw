@@ -21,6 +21,11 @@ library(stats)
 library(aTSA)
 library(MASS)
 library(car)
+library(knitr)
+library(rugarch)
+library(moments)
+library(e1071)
+library(caret)
 ```
 
 # Data dan Eksplorasi Awal
@@ -292,16 +297,55 @@ sisaan_asli <- aktual_asli - fitted_asli
 shapiro.test(sisaan_asli)
 ```
 ```{r}
-lambda_optimal <- BoxCox.lambda(train_data) 
-print(lambda_optimal) 
-
-model_boxcox <- Arima(train_data, 
-                      order = c(1,0,1), 
-                      seasonal = list(order = c(0,1,1), period = 11),
-                      lambda = lambda_optimal) 
-
-shapiro.test(residuals(model_boxcox))
+kurtosis(sisaan)
+skewness(sisaan)
 ```
+```{r}
+tahun_train <- as.numeric(time(train_data))
+out_idx <- which(abs(scale(sisaan)) > 2.5)
+
+data.frame(
+  Tahun     = tahun_train[out_idx],
+  Residual  = round(sisaan[out_idx], 3),
+  Z_score   = round(scale(sisaan)[out_idx], 2)
+)
+```
+
+```{r}
+tahun_train <- as.numeric(time(train_data))
+out_idx <- which(abs(scale(sisaan)) > 2.5)   
+
+sisaan_tanpa <- sisaan[-out_idx]
+kurtosis(sisaan_tanpa)   
+skewness(sisaan_tanpa)   
+
+shapiro.test(sisaan_tanpa)
+```
+#### Dummy
+```{r}
+tahun_train <- as.numeric(time(train_data))
+
+dummy_1955 <- as.numeric(tahun_train == 1955)
+
+model6_dummy <- Arima(train_log,
+                      order = c(2,0,1),
+                      seasonal = list(order = c(0,1,1), period = 11),
+                      xreg = dummy_1955)
+
+summary(model6_dummy)
+lmtest::coeftest(model6_dummy)   
+dummy_1955
+```
+```{r}
+sisaan_red <- residuals(model6_dummy)
+shapiro.test(sisaan_red)
+kurtosis(sisaan_red); skewness(sisaan_red)
+Box.test(sisaan_red, type = "Ljung", lag = 22)
+Box.test((sisaan_red)^2, type = "Ljung", lag = 22)
+t.test(sisaan_red, mu = 0)
+```
+
+
 
 
 ### Sisaan saling bebas
@@ -470,6 +514,66 @@ mae_naive_seasonal <- mean(abs(naive_seasonal_errors))
 mase_seasonal <- mae_model / mae_naive_seasonal
 cat("MASE (Seasonal Naive) :", mase_seasonal, "\n")
 ```
+# Model SARIMA-GARCH
+## GARCH
+```{r}
+spec <- ugarchspec(
+  variance.model     = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model         = list(armaOrder = c(0,0), include.mean = FALSE),  
+  distribution.model = "std"
+)
+
+fit_garch <- ugarchfit(spec, data = as.numeric(residuals(model6_dummy)),
+                       solver = "hybrid")
+fit_garch
+
+res_std <- residuals(fit_garch, standardize = TRUE)
+Box.test((as.numeric(res_std))^2, type = "Ljung", lag = 22) 
+shapiro.test(as.numeric(res_std))
+
+garch_fc <- ugarchforecast(fit_garch, n.ahead = length(test_data))
+sigma_fc <- as.numeric(sigma(garch_fc))
+
+mean_fc <- as.numeric(prediksi_asli)
+ci_lower <- mean_fc - 1.96 * sigma_fc
+ci_upper <- mean_fc + 1.96 * sigma_fc
+```
+## ARCH
+```{r}
+spec_arch <- ugarchspec(
+  variance.model     = list(model = "sGARCH", garchOrder = c(1,0)),  # ARCH(1)
+  mean.model         = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+fit_arch <- ugarchfit(spec_arch, data = as.numeric(residuals(model6_dummy)),
+                      solver = "hybrid")
+fit_arch
+```
+```{r}
+c(GARCH11 = infocriteria(fit_garch)[1],
+  ARCH1  = infocriteria(fit_arch)[1])
+```
+
+```{r}
+res_std_arch <- residuals(fit_arch, standardize = TRUE)
+
+Box.test(as.numeric(res_std_arch)^2, type = "Ljung", lag = 22)   
+Box.test(as.numeric(res_std_arch),    type = "Ljung", lag = 22)   
+shapiro.test(as.numeric(res_std_arch))                           
+t.test(as.numeric(res_std_arch), mu = 0, conf.level = 0.95) 
+kurtosis(as.numeric(res_std_arch)); skewness(as.numeric(res_std_arch))
+```
+## IGARCH
+```{r}
+spec_igarch <- ugarchspec(
+  variance.model     = list(model = "iGARCH", garchOrder = c(1,1)),
+  mean.model         = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+fit_igarch <- ugarchfit(spec_igarch, data = as.numeric(residuals(model6_dummy)),
+                        solver = "hybrid")
+fit_igarch
+```
 # Model TBATS
 ## Model pertama
 ```{r}
@@ -523,6 +627,10 @@ checkresiduals(model_tbats)
 ## Model kedua
 ```{r}
 model_tbats_coba <- tbats(train_data, seasonal.periods = c(11, 5.5))
+model_tbats_coba
+```
+
+```{r}
 checkresiduals(model_tbats_coba)
 sisaan_coba<-residuals(model_tbats_coba)
 shapiro.test(sisaan_coba)
@@ -532,6 +640,107 @@ Box.test(sisaan_coba, lag=11, type="Ljung-Box")
 Box.test((sisaan_coba)^2, lag=22, type="Ljung")
 Box.test((sisaan_coba)^2, lag=11, type="Ljung")
 ```
+```{r}
+sisaan_tbats_B <- residuals(model_tbats_coba)
+acf(sisaan_tbats_B, lag.max = 30)
+
+for (lag_test in c(10, 15, 22, 30)) {
+  cat("Lag", lag_test, ": p =", 
+      Box.test(sisaan_tbats_B, type = "Ljung", lag = lag_test)$p.value, "\n")
+}
+```
+```{r}
+sisaan_tbats_B <- residuals(model_tbats_coba)
+acf_obj <- acf(sisaan_tbats_B, lag.max = 30, plot = FALSE)
+
+acf_obj$acf[6]   
+acf_obj$acf[11]  
+```
+```{r}
+res_tbats <- residuals(model_tbats_coba)
+res_ts <- ts(as.numeric(res_tbats), frequency = 5)
+
+model_res_auto <- auto.arima(res_ts, 
+                              seasonal = TRUE,
+                              stepwise = FALSE, 
+                              approximation = FALSE)
+summary(model_res_auto)
+lmtest::coeftest(model_res_auto)
+```
+```{r}
+res_hybrid <- residuals(model_res_auto)
+
+Box.test(res_hybrid, type = "Ljung", lag = 10)   
+Box.test(res_hybrid, type = "Ljung", lag = 22)   
+Box.test(res_hybrid^2, type = "Ljung", lag = 10)   
+Box.test(res_hybrid^2, type = "Ljung", lag = 22) 
+shapiro.test(res_hybrid)                          
+t.test(res_hybrid, mu = 0)                        
+
+acf(res_hybrid, lag.max = 30)
+```
+```{r}
+spec_igarch_tbats <- ugarchspec(
+  variance.model     = list(model = "iGARCH", garchOrder = c(1,1)),
+  mean.model         = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+fit_igarch_tbats <- ugarchfit(spec_igarch_tbats, 
+                                data = as.numeric(res_hybrid),
+                                solver = "hybrid")
+fit_igarch_tbats
+
+res_std_tbats <- as.numeric(residuals(fit_igarch_tbats, standardize = TRUE))
+Box.test(res_std_tbats^2, type = "Ljung", lag = 22)   # harus lolos
+shapiro.test(res_std_tbats)
+```
+```{r}
+train_log     <- log(as.numeric(train_data))
+train_log_ts  <- ts(train_log, start = start(train_data), frequency = 1)
+
+model_tbats_log <- tbats(train_log_ts, seasonal.periods = c(11, 5.5))
+summary(model_tbats_log)
+
+res_log <- residuals(model_tbats_log)
+Box.test(res_log,   type = "Ljung", lag = 10)   
+Box.test(res_log,   type = "Ljung", lag = 22)
+shapiro.test(res_log)                           
+Box.test(res_log^2, type = "Ljung", lag = 22)   
+t.test(res_log, mu = 0)
+
+res_log_ts <- ts(as.numeric(res_log), frequency = 5)
+model_res_log <- auto.arima(res_log_ts, seasonal = TRUE,
+                              stepwise = FALSE, approximation = FALSE)
+summary(model_res_log)
+lmtest::coeftest(model_res_log)
+
+res_hybrid_log <- residuals(model_res_log)
+Box.test(res_hybrid_log,   type = "Ljung", lag = 10)
+Box.test(res_hybrid_log,   type = "Ljung", lag = 22)
+Box.test(res_hybrid_log^2, type = "Ljung", lag = 22)   
+shapiro.test(res_hybrid_log)
+t.test(res_hybrid_log, mu = 0)
+```
+```{r}
+spec_garch_log <- ugarchspec(
+  variance.model     = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model         = list(armaOrder = c(0,0), include.mean = FALSE),
+  distribution.model = "std"
+)
+fit_garch_log <- ugarchfit(spec_garch_log, 
+                             data = as.numeric(res_hybrid_log), 
+                             solver = "hybrid")
+fit_garch_log
+
+coef(fit_garch_log)["alpha1"]
+coef(fit_garch_log)["beta1"]
+
+res_std_log <- as.numeric(residuals(fit_garch_log, standardize = TRUE))
+Box.test(res_std_log^2, type = "Ljung", lag = 22)   # target > 0,05
+shapiro.test(res_std_log)
+```
+
+
 ## Perbandingan
 ```{r}
 ramalan_A <- forecast::forecast(model_tbats, h = length(test_data))
@@ -590,6 +799,9 @@ model_fourier_k2 <- auto.arima(
 summary(model_fourier_k2)
 ```
 ```{r}
+lmtest::coeftest(model_fourier_k2)
+```
+```{r}
 ramalan_fourier_k1 <- forecast::forecast(model_fourier_k1, h = length(test_data), xreg = fourier_test_k1)
 ramalan_fourier_k2 <- forecast::forecast(model_fourier_k2, h = length(test_data), xreg = fourier_test_k2)
 ```
@@ -612,11 +824,24 @@ Box.test((sisaan_fourier)^2, type = "Ljung-Box", lag = 22)
 ```
 
 # Model Seasonal Naive
-```{r}
-ramalan_snaive <- snaive(train_data, h = length(test_data))
 
-akurasi_snaive <- accuracy(ramalan_snaive, test_data)
-print(akurasi_snaive["Test set", c("RMSE", "MAE", "MASE")])
+```{r}
+y_train <- as.numeric(train_data)
+y_test  <- as.numeric(test_data)
+m  <- 11
+h  <- length(y_test)
+
+snaive_pred <- rep(tail(y_train, m), length.out = h)
+naive_seasonal_err <- mean(abs(diff(y_train, lag = m)))
+
+err_sn  <- y_test - snaive_pred
+rmse_sn <- sqrt(mean(err_sn^2))
+mae_sn  <- mean(abs(err_sn))
+mase_sn <- mae_sn / naive_seasonal_err
+
+cat("Seasonal Naive  RMSE:", round(rmse_sn, 2),
+    " MAE:", round(mae_sn, 2),
+    " MASE:", round(mase_sn, 4), "\n")
 ```
 # Model ETS
 ```{r}
@@ -654,133 +879,329 @@ Box.test(sisaan_ets, type = "Ljung-Box", lag = 22)
 t.test(sisaan_ets, mu = 0)
 Box.test((sisaan_ets)^2, type = "Ljung-Box", lag = 22)
 ```
+```{r}
+acf(residuals(model_ets), lag.max = 30)
+```
+```{r}
+res_ets <- residuals(model_ets)
+res_ets_ts <- ts(as.numeric(res_ets), frequency = 5)
+model_res_ets_v5 <- Arima(res_ets_ts, 
+                            order = c(0, 0, 4),
+                            seasonal = list(order = c(0, 0, 2), period = 5),
+                            fixed = c(0, NA, NA, NA, NA, NA),
+                            include.mean = FALSE)
+
+summary(model_res_ets_v5)
+lmtest::coeftest(model_res_ets_v5)
+
+res_v5 <- residuals(model_res_ets_v5)
+Box.test(res_v5,   type = "Ljung", lag = 10)
+Box.test(res_v5,   type = "Ljung", lag = 22)
+Box.test(res_v5^2, type = "Ljung", lag = 22)
+shapiro.test(res_v5)
+t.test(res_v5, mu = 0)
+
+AIC(model_res_ets_v5)
+```
+
+
+# Model Holts-Winter
+```{r}
+train_ts11 <- ts(train_data, frequency = 11)
+H <- length(test_data)
+
+hw_add <- HoltWinters(train_ts11, seasonal = "additive")
+hw_mul <- HoltWinters(train_ts11, seasonal = "multiplicative")
+
+cat("SSE aditif:", round(hw_add$SSE, 1),
+    "| SSE multiplikatif:", round(hw_mul$SSE, 1), "\n")
+```
+
+```{r}
+hw <- if (hw_add$SSE <= hw_mul$SSE) hw_add else hw_mul
+tipe_hw <- hw$seasonal
+cat("Dipilih:", tipe_hw, "\n")
+hw
+```
+
+```{r}
+fc_hw <- forecast::forecast(hw, h = H)
+pred_hw <- as.numeric(fc_hw$mean)
+
+res_hw     <- residuals(hw)                              
+fitted_hw  <- as.numeric(hw$fitted[, "xhat"])   
+```
+
+```{r}
+Box.test(res_hw, lag = 22, type = "Ljung-Box")
+shapiro.test(res_hw)
+Box.test(res_hw^2, lag = 22, type = "Ljung-Box")
+t.test(res_hw, mu = 0)
+```
+```{r}
+pr_hw <- c(alpha = hw$alpha, beta = hw$beta, gamma = hw$gamma)
+kable(data.frame(Parameter = names(pr_hw), Nilai = round(pr_hw, 4)),
+      caption = "Parameter Holt-Winters (tanpa galat baku)")
+```
+```{r}
+aktual_train <- as.numeric(train_data)[(length(train_data) - length(fitted_hw) + 1):length(train_data)]
+aktual_test  <- as.numeric(test_data)
+naive_err_s  <- mean(abs(diff(as.numeric(train_data), lag = 11)))
+```
+```{r}
+hitung_metrik <- function(pred, aktual, denom) {
+  err  <- aktual - pred
+  rmse <- sqrt(mean(err^2))
+  mae  <- mean(abs(err))
+  mase <- mae / denom
+  c(RMSE = round(rmse, 2), MAE = round(mae, 2), MASE = round(mase, 4))
+}
+
+m_train <- hitung_metrik(fitted_hw, aktual_train, naive_err_s)
+m_test  <- hitung_metrik(pred_hw,   aktual_test,  naive_err_s)
+
+tabel_metrik_hw <- data.frame(
+  Set    = c("Training", "Testing"),
+  RMSE   = c(m_train["RMSE"], m_test["RMSE"]),
+  MAE    = c(m_train["MAE"],  m_test["MAE"]),
+  MASE   = c(m_train["MASE"], m_test["MASE"])
+)
+kable(tabel_metrik_hw, caption = "Metrik Training & Testing - Holt-Winters")
+```
+
+# Diagnostik Model SARIMA-IGARCH
+```{r}
+ramalan_dummy <- forecast::forecast(model6_dummy, 
+                                     h = length(test_data),
+                                     xreg = rep(0, length(test_data)))
+pred_sarima_dummy <- as.numeric(exp(ramalan_dummy$mean))
+
+igarch_fc        <- ugarchforecast(fit_igarch, n.ahead = length(test_data))
+sigma_fc         <- as.numeric(sigma(igarch_fc))
+df_t             <- coef(fit_igarch)["shape"]
+q975             <- qt(0.975, df = df_t)
+mu_log           <- log(pred_sarima_dummy)
+ci_lower_igarch  <- exp(mu_log - q975 * sigma_fc)
+ci_upper_igarch  <- exp(mu_log + q975 * sigma_fc)
+```
 
 # Perbandingan Data Training
 ```{r}
-model6_asli <- Arima(train_data, 
-                     order = c(2, 0, 1), 
-                     seasonal = list(order = c(0, 1, 1), period = 11))
+tabel_train_metrics <- data.frame(
+  Model = c(
+    "SARIMA (tanpa dummy)",
+    "SARIMA + dummy + iGARCH",
+    "ETS murni",
+    "ETS-ARIMA hybrid",
+    "TBATS (s=11)",
+    "TBATS (s=11 & 5.5)",
+    "TBATS-ARIMA hybrid",
+    "Holt-Winters",
+    "Fourier K=1",
+    "Fourier K=2",
+    "Seasonal Naive (in-sample)"
+  ),
+  RMSE = round(c(metrik_tr_sarima["RMSE"], metrik_tr_sarima_d["RMSE"],
+                 metrik_tr_ets["RMSE"], metrik_tr_ets_arima["RMSE"],
+                 metrik_tr_tbats_11["RMSE"], metrik_tr_tbats_1155["RMSE"],
+                 metrik_tr_tbats_ar["RMSE"], metrik_tr_hw["RMSE"],
+                 metrik_tr_f1["RMSE"], metrik_tr_f2["RMSE"],
+                 metrik_tr_snaive["RMSE"]), 3),
+  MAE  = round(c(metrik_tr_sarima["MAE"], metrik_tr_sarima_d["MAE"],
+                 metrik_tr_ets["MAE"], metrik_tr_ets_arima["MAE"],
+                 metrik_tr_tbats_11["MAE"], metrik_tr_tbats_1155["MAE"],
+                 metrik_tr_tbats_ar["MAE"], metrik_tr_hw["MAE"],
+                 metrik_tr_f1["MAE"], metrik_tr_f2["MAE"],
+                 metrik_tr_snaive["MAE"]), 3),
+  MASE = round(c(metrik_tr_sarima["MASE"], metrik_tr_sarima_d["MASE"],
+                 metrik_tr_ets["MASE"], metrik_tr_ets_arima["MASE"],
+                 metrik_tr_tbats_11["MASE"], metrik_tr_tbats_1155["MASE"],
+                 metrik_tr_tbats_ar["MASE"], metrik_tr_hw["MASE"],
+                 metrik_tr_f1["MASE"], metrik_tr_f2["MASE"],
+                 metrik_tr_snaive["MASE"]), 4)
+)
 
-get_ic <- function(model, name) {
+tabel_train_metrics <- tabel_train_metrics[order(tabel_train_metrics$MASE), ]
+rownames(tabel_train_metrics) <- NULL
+
+kable(tabel_train_metrics,
+      caption = "Metrik In-Sample Fit pada Data Training (1937–2005)")
+```
+
+```{r}
+konst_jacob <- 2 * sum(log(as.numeric(train_data)))
+
+get_ic <- function(model, name, is_log = FALSE, komponen = "Mean") {
   if (inherits(model, "tbats")) {
-    n <- length(model$y)           
-    k <- length(coef(model))       
-    AIC_val <- model$AIC            
-    AICc_val <- AIC_val + (2 * k * (k + 1)) / (n - k - 1)
-    logLik_val <- (2 * k - AIC_val) / 2   
-    BIC_val  <- -2 * logLik_val + k * log(n)
+    n <- length(model$y); k <- length(coef(model))
+    AIC_val  <- model$AIC
+    AICc_val <- AIC_val + (2*k*(k+1))/(n-k-1)
+    logLik_v <- (2*k - AIC_val)/2
+    BIC_val  <- -2*logLik_v + k*log(n)
+  } else if (inherits(model, "HoltWinters")) {
+    n <- length(residuals(model)); k <- 3
+    sse <- sum(residuals(model)^2)
+    AIC_val  <- n*log(sse/n) + 2*k
+    AICc_val <- AIC_val + (2*k*(k+1))/(n-k-1)
+    BIC_val  <- n*log(sse/n) + k*log(n)
   } else {
-    AIC_val  <- model$aic
-    AICc_val <- model$aicc
-    BIC_val  <- model$bic
+    AIC_val  <- model$aic; AICc_val <- model$aicc; BIC_val <- model$bic
   }
-  
-  data.frame(Model = name, AIC = AIC_val, AICc = AICc_val, BIC = BIC_val)
+  if (is_log) {
+    AIC_val  <- AIC_val  + konst_jacob
+    AICc_val <- AICc_val + konst_jacob
+    BIC_val  <- BIC_val  + konst_jacob
+  }
+  data.frame(Model = name, Komponen = komponen,
+             AIC = AIC_val, AICc = AICc_val, BIC = BIC_val)
+}
+
+get_ic_garch <- function(fit, name) {
+  n  <- length(residuals(fit))
+  ic <- infocriteria(fit)
+  data.frame(Model = name, Komponen = "Variance",
+             AIC = ic[1]*n, AICc = NA, BIC = ic[2]*n)
 }
 
 tabel_train <- rbind(
-  get_ic(model6_asli,       "SARIMA (Model 6 - Asli)"),
-  get_ic(model_ets,         "ETS (Auto)"),
-  get_ic(model_tbats,       "TBATS (s=11)"),
-  get_ic(model_tbats_coba,  "TBATS (s=11 & 5.5)"),
-  get_ic(model_fourier_k1,  "Fourier K=1"),
-  get_ic(model_fourier_k2,  "Fourier K=2")
+  get_ic(model6_dummy,     "SARIMA + dummy 1955 (Jacobian-adj)", is_log = TRUE),
+  get_ic(model_ets,        "ETS (Auto)"),
+  get_ic(hw,               "Holt-Winters"),
+  get_ic(model_tbats,      "TBATS (s=11)"),
+  get_ic(model_tbats_coba, "TBATS (s=11 & 5.5)"),
+  get_ic(model_fourier_k1, "Fourier K=1"),
+  get_ic(model_fourier_k2, "Fourier K=2"),
+  get_ic_garch(fit_arch,   "ARCH(1)-t"),
+  get_ic_garch(fit_garch,  "GARCH(1,1)-t"),
+  get_ic_garch(fit_igarch, "iGARCH(1,1)-t")
 )
 
-tabel_train <- tabel_train[order(tabel_train$AICc), ]
-tabel_train[, 2:4] <- round(tabel_train[, 2:4], 2)
+tabel_train$Komponen <- factor(tabel_train$Komponen,
+                                levels = c("Mean", "Variance"))
+tabel_train <- tabel_train[order(tabel_train$Komponen, tabel_train$AICc, na.last = TRUE), ]
+tabel_train[, 3:5] <- round(tabel_train[, 3:5], 2)
 rownames(tabel_train) <- NULL
 
-print(tabel_train)
+kable(tabel_train, 
+      caption = "Information Criteria Model Conditional Mean dan Conditional Variance")
 ```
+
+
 # Perbandingan Data Testing
 ```{r}
-pred_snaive <- as.numeric(ramalan_snaive$mean)
-pred_ets    <- as.numeric(ramalan_ets$mean)
-pred_sarima <- as.numeric(prediksi_asli)
-pred_A      <- as.numeric(ramalan_A$mean)
-pred_B      <- as.numeric(ramalan_B$mean)
-pred_f1     <- as.numeric(ramalan_fourier_k1$mean)
-pred_f2     <- as.numeric(ramalan_fourier_k2$mean)
+fc_tbats <- forecast::forecast(model_tbats_coba, h = length(test_data))
+fc_res   <- forecast::forecast(model_res_auto, h = length(test_data))
+pred_tbats_hybrid <- as.numeric(fc_tbats$mean) + as.numeric(fc_res$mean)
 
-aktual_test <- as.numeric(test_data)
+fc_ets   <- forecast::forecast(model_ets, h = length(test_data))
+fc_res_e <- forecast::forecast(model_res_ets_v5, h = length(test_data))
+pred_ets_hybrid <- as.numeric(fc_ets$mean) + as.numeric(fc_res_e$mean)
+
+ramalan_dummy <- forecast::forecast(model6_dummy, 
+                                     h = length(test_data),
+                                     xreg = rep(0, length(test_data)))
+pred_sarima_dummy <- as.numeric(exp(ramalan_dummy$mean))
+
+pred_tbats_murni <- as.numeric(fc_tbats$mean)
+
+aktual_test        <- as.numeric(test_data)
 naive_err_seasonal <- mean(abs(diff(as.numeric(train_data), lag = 11)))
 
-hitung_metrik <- function(prediksi, aktual, denom_mase) {
-  err <- aktual - prediksi
-  rmse <- sqrt(mean(err^2))
-  mae  <- mean(abs(err))
-  mase <- mae / denom_mase
-  return(c(RMSE = rmse, MAE = mae, MASE = mase))
+hitung_metrik <- function(pred, aktual, denom) {
+  err <- aktual - pred
+  c(RMSE = sqrt(mean(err^2)), MAE = mean(abs(err)), MASE = mean(abs(err))/denom)
 }
 
-metrik_sn <- hitung_metrik(pred_snaive, aktual_test, naive_err_seasonal)
-metrik_s  <- hitung_metrik(pred_sarima, aktual_test, naive_err_seasonal)
-metrik_e  <- hitung_metrik(pred_ets,    aktual_test, naive_err_seasonal)
-metrik_A  <- hitung_metrik(pred_A,      aktual_test, naive_err_seasonal)
-metrik_B  <- hitung_metrik(pred_B,      aktual_test, naive_err_seasonal)
-metrik_f1 <- hitung_metrik(pred_f1,     aktual_test, naive_err_seasonal)
-metrik_f2 <- hitung_metrik(pred_f2,     aktual_test, naive_err_seasonal)
+metrik_sd  <- hitung_metrik(pred_sarima_dummy,   aktual_test, naive_err_seasonal)
+metrik_s   <- hitung_metrik(as.numeric(prediksi_asli), aktual_test, naive_err_seasonal)
+metrik_th  <- hitung_metrik(pred_tbats_hybrid,   aktual_test, naive_err_seasonal)
+metrik_tb  <- hitung_metrik(pred_tbats_murni,    aktual_test, naive_err_seasonal)
+metrik_t1  <- hitung_metrik(as.numeric(ramalan_A$mean), aktual_test, naive_err_seasonal)
+metrik_e   <- hitung_metrik(as.numeric(ramalan_ets$mean), aktual_test, naive_err_seasonal)
+metrik_eh  <- hitung_metrik(pred_ets_hybrid,     aktual_test, naive_err_seasonal)   # BARU
+metrik_hw  <- hitung_metrik(as.numeric(fc_hw$mean), aktual_test, naive_err_seasonal)
+metrik_f1  <- hitung_metrik(as.numeric(ramalan_fourier_k1$mean), aktual_test, naive_err_seasonal)
+metrik_f2  <- hitung_metrik(as.numeric(ramalan_fourier_k2$mean), aktual_test, naive_err_seasonal)
+metrik_sn  <- hitung_metrik(snaive_pred, aktual_test, naive_err_seasonal)
 
 tabel_test <- data.frame(
-  Model = c("Seasonal Naive (Baseline)", "SARIMA (Model 6)", "ETS (Auto)", 
-            "TBATS (s=11)", "TBATS (s=11 & 5.5)", "Fourier K=1", "Fourier K=2"),
-  RMSE  = round(c(metrik_sn["RMSE"], metrik_s["RMSE"], metrik_e["RMSE"], 
-                  metrik_A["RMSE"], metrik_B["RMSE"], metrik_f1["RMSE"], metrik_f2["RMSE"]), 2),
-  MAE   = round(c(metrik_sn["MAE"], metrik_s["MAE"], metrik_e["MAE"], 
-                  metrik_A["MAE"], metrik_B["MAE"], metrik_f1["MAE"], metrik_f2["MAE"]), 2),
-  MASE  = round(c(metrik_sn["MASE"], metrik_s["MASE"], metrik_e["MASE"], 
-                  metrik_A["MASE"], metrik_B["MASE"], metrik_f1["MASE"], metrik_f2["MASE"]), 4)
+  Model = c(
+    "ETS (Auto) murni",
+    "ETS-ARIMA hybrid",                                 
+    "TBATS (s=11)",
+    "TBATS (s=11 & 5.5) murni",
+    "TBATS-ARIMA hybrid",
+    "SARIMA (tanpa dummy)",
+    "SARIMA + dummy 1955 + iGARCH(1,1)-t",
+    "Fourier K=2",
+    "Fourier K=1",
+    "Seasonal Naive (Baseline)",
+    "Holt-Winters"
+  ),
+  RMSE = round(c(metrik_e["RMSE"], metrik_eh["RMSE"], metrik_t1["RMSE"], metrik_tb["RMSE"],
+                 metrik_th["RMSE"], metrik_s["RMSE"], metrik_sd["RMSE"],
+                 metrik_f2["RMSE"], metrik_f1["RMSE"], metrik_sn["RMSE"], metrik_hw["RMSE"]), 3),
+  MAE  = round(c(metrik_e["MAE"], metrik_eh["MAE"], metrik_t1["MAE"], metrik_tb["MAE"],
+                 metrik_th["MAE"], metrik_s["MAE"], metrik_sd["MAE"],
+                 metrik_f2["MAE"], metrik_f1["MAE"], metrik_sn["MAE"], metrik_hw["MAE"]), 3),
+  MASE = round(c(metrik_e["MASE"], metrik_eh["MASE"], metrik_t1["MASE"], metrik_tb["MASE"],
+                 metrik_th["MASE"], metrik_s["MASE"], metrik_sd["MASE"],
+                 metrik_f2["MASE"], metrik_f1["MASE"], metrik_sn["MASE"], metrik_hw["MASE"]), 3)
 )
 
 tabel_test <- tabel_test[order(tabel_test$MASE), ]
 rownames(tabel_test) <- NULL
 
-print(tabel_test)
+kable(tabel_test, caption = "Perbandingan Metrik Peramalan pada Data Testing")
 ```
 
 
 # Perbandingan Diagnostik dan Signifikansi
 ```{r}
-ekstrak_diagnostik_tahunan <- function(model, name) {
-  if (inherits(model, "tbats")) {
-    total_par <- length(model$lambda) + length(model$alpha) + length(model$beta) + 
-                 length(model$damping.parameter) + length(model$gamma.one.values) + 
-                 length(model$gamma.two.values) + length(model$ar.coefficients) + 
-                 length(model$ma.coefficients) + 2 * sum(model$k.vector)
-  } else {
-    total_par <- length(coef(model))
-  }
-  
-  sig_par <- NA 
-  if (inherits(model, "Arima")) {
-    p_vals <- lmtest::coeftest(model)[, 4]
-    sig_par <- sum(p_vals < 0.05, na.rm = TRUE)
-  }
-  
-  sisaan <- residuals(model)
-  
-  lb_p <- Box.test(sisaan, lag = 22, type = "Ljung-Box")$p.value
-  shapiro_p <- tryCatch(shapiro.test(sisaan)$p.value, error = function(e) NA)
-  arch_p <- Box.test((sisaan)^2, lag = 22, type = "Ljung-Box")$p.value
-  ttest_p <- tryCatch(t.test(sisaan, mu = 0)$p.value, error = function(e) NA)
-  
-  data.frame(
-    Model = name,
-    Total_Par = total_par,
-    Signifikan = sig_par,
-    LB = lb_p,
-    Shapiro = shapiro_p,
-    ARCH = arch_p,
-    T_Test = ttest_p
-  )
-}
+res_std_igarch <- as.numeric(residuals(fit_igarch, standardize = TRUE))
+
+baris_final <- data.frame(
+  Model      = "SARIMA + dummy 1955 + iGARCH(1,1)-t",
+  Total_Par  = 8,  
+  Signifikan = NA,  
+  LB         = Box.test(res_std_igarch,   type = "Ljung", lag = 22)$p.value,
+  Shapiro    = shapiro.test(res_std_igarch)$p.value,
+  ARCH       = Box.test(res_std_igarch^2, type = "Ljung", lag = 22)$p.value,
+  T_Test     = t.test(res_std_igarch, mu = 0)$p.value
+)
+
+res_ets_hybrid <- residuals(model_res_ets_v5)
+
+baris_ets_hybrid <- data.frame(
+  Model      = "ETS-ARIMA hybrid",
+  Total_Par  = length(coef(model_ets)) + length(coef(model_res_ets_v5)),
+  Signifikan = NA,
+  LB         = Box.test(res_ets_hybrid,   type = "Ljung", lag = 22)$p.value,
+  Shapiro    = shapiro.test(res_ets_hybrid)$p.value,
+  ARCH       = Box.test(res_ets_hybrid^2, type = "Ljung", lag = 22)$p.value,
+  T_Test     = t.test(res_ets_hybrid, mu = 0)$p.value
+)
+
+res_hybrid <- residuals(model_res_auto)
+
+baris_hybrid <- data.frame(
+  Model      = "TBATS-ARIMA hybrid",
+  Total_Par  = length(coef(model_tbats_coba)) + length(coef(model_res_auto)),
+  Signifikan = NA,
+  LB         = Box.test(res_hybrid,   type = "Ljung", lag = 22)$p.value,
+  Shapiro    = shapiro.test(res_hybrid)$p.value,
+  ARCH       = Box.test(res_hybrid^2, type = "Ljung", lag = 22)$p.value,
+  T_Test     = t.test(res_hybrid, mu = 0)$p.value
+)
 
 tabel_diag_tahunan <- rbind(
-  ekstrak_diagnostik_tahunan(model6,           "SARIMA (Model 6 - Log)"),
+  baris_final,
+  baris_ets_hybrid,                              
+  baris_hybrid,
   ekstrak_diagnostik_tahunan(model_tbats,      "TBATS (s=11)"),
-  ekstrak_diagnostik_tahunan(model_tbats_coba, "TBATS (11 & 5.5)"),
-  ekstrak_diagnostik_tahunan(model_ets,        "ETS (Auto)"),
+  ekstrak_diagnostik_tahunan(model_tbats_coba, "TBATS (s=11 & 5.5) murni"),
+  ekstrak_diagnostik_tahunan(model_ets,        "ETS (Auto) murni"),
+  ekstrak_diagnostik_tahunan(hw,               "Holt-Winters"),    
   ekstrak_diagnostik_tahunan(model_fourier_k1, "Fourier K=1"),
   ekstrak_diagnostik_tahunan(model_fourier_k2, "Fourier K=2")
 )
@@ -788,6 +1209,305 @@ tabel_diag_tahunan <- rbind(
 cols_to_round <- c("LB", "Shapiro", "ARCH", "T_Test")
 tabel_diag_tahunan[cols_to_round] <- round(tabel_diag_tahunan[cols_to_round], 3)
 
-print(tabel_diag_tahunan)
+kable(tabel_diag_tahunan, 
+      caption = "Perbandingan Diagnostik Residual Model")
 ```
 ETS melanggar asumsi galat saling bebas. SARIMA melanggar asumsi galat menyebar normal. TBATS (s=11) melanggar asumsi galat saling bebas. TBATS (s=11 & 5.5) melanggar asumsi galat saling bebas di dua kali siklus 5.5. Fourier K=2 memenuhi semua asumsi galat. 
+
+# Cross-Validation
+```{r}
+y        <- as.numeric(train_data)
+t_y      <- as.numeric(time(train_data))
+n        <- length(y)
+h        <- 20                
+min_orig <- 40               
+
+origins  <- min_orig:(n - h)
+n_folds  <- length(origins)
+
+model_names <- c("SARIMA", "Fourier_K1", "Fourier_K2", "ETS", 
+                 "HoltWinters", "TBATS_11", "TBATS_11_5.5", "SeasonalNaive",
+                 "SARIMA_Dummy", "TBATS_Hybrid", "ETS_Hybrid")
+errors_cv <- matrix(NA, n_folds, length(model_names))
+colnames(errors_cv) <- model_names
+
+
+for (k in seq_along(origins)) {
+  origin    <- origins[k]
+  tr        <- ts(y[1:origin], start = t_y[1], frequency = 1)
+  actual_h1 <- y[origin + 1]
+  t_idx     <- 1:origin
+  
+  fit_s <- tryCatch(forecast::Arima(log(tr), order = c(2,0,1),
+                          seasonal = list(order = c(0,1,1), period = 11)),
+                    error = function(e) NULL)
+  if (!is.null(fit_s)) {
+    fc <- forecast::forecast(fit_s, h = h) 
+    errors_cv[k, 1] <- actual_h1 - exp(fc$mean[1])
+  }
+  
+  fr_tr_k1 <- cbind(sin(2*pi*t_idx/11), cos(2*pi*t_idx/11))
+  fr_fu_k1 <- cbind(sin(2*pi*(origin+1)/11), cos(2*pi*(origin+1)/11))
+  fit_f1 <- tryCatch(forecast::auto.arima(tr, xreg = fr_tr_k1, seasonal = FALSE),
+                     error = function(e) NULL)
+  if (!is.null(fit_f1)) {
+    fc <- forecast::forecast(fit_f1, h = h, xreg = fr_fu_k1)
+    errors_cv[k, 2] <- actual_h1 - fc$mean[1]
+  }
+  
+  fr_tr_k2 <- cbind(sin(2*pi*t_idx/11), cos(2*pi*t_idx/11),
+                    sin(4*pi*t_idx/11), cos(4*pi*t_idx/11))
+  fr_fu_k2 <- cbind(sin(2*pi*(origin+1)/11), cos(2*pi*(origin+1)/11),
+                    sin(4*pi*(origin+1)/11), cos(4*pi*(origin+1)/11))
+  fit_f2 <- tryCatch(forecast::auto.arima(tr, xreg = fr_tr_k2, seasonal = FALSE),
+                     error = function(e) NULL)
+  if (!is.null(fit_f2)) {
+    fc <- forecast::forecast(fit_f2, h = h, xreg = fr_fu_k2) 
+    errors_cv[k, 3] <- actual_h1 - fc$mean[1]
+  }
+  
+  tr_ts11 <- ts(tr, frequency = 11)
+  fit_e <- tryCatch(forecast::ets(tr_ts11, model = "ZZZ"), error = function(e) NULL)
+  if (!is.null(fit_e)) {
+    fc <- forecast::forecast(fit_e, h = h) 
+    errors_cv[k, 4] <- actual_h1 - fc$mean[1]
+  }
+  
+  fit_h <- tryCatch(stats::HoltWinters(tr_ts11, seasonal = "additive"),
+                    error = function(e) NULL)
+  if (!is.null(fit_h)) {
+    fc <- forecast::forecast(fit_h, h = h) 
+    errors_cv[k, 5] <- actual_h1 - fc$mean[1]
+  }
+  
+  fit_t1 <- tryCatch(forecast::tbats(tr, seasonal.periods = 11), error = function(e) NULL)
+  if (!is.null(fit_t1)) {
+    fc <- forecast::forecast(fit_t1, h = h) 
+    errors_cv[k, 6] <- actual_h1 - fc$mean[1]
+  }
+  
+  fit_t2 <- tryCatch(forecast::tbats(tr, seasonal.periods = c(11, 5.5)), error = function(e) NULL)
+  if (!is.null(fit_t2)) {
+    fc <- forecast::forecast(fit_t2, h = h) 
+    errors_cv[k, 7] <- actual_h1 - fc$mean[1]
+  }
+  
+  fit_sn <- forecast::snaive(tr_ts11, h = h)
+  errors_cv[k, 8] <- actual_h1 - fit_sn$mean[1]
+  
+  fit_sd <- tryCatch(forecast::Arima(log(tr), order = c(2,0,1),
+                        seasonal = list(order = c(0,1,1), period = 11),
+                        xreg = as.numeric(t_y[1:origin] == 1955)),
+                  error = function(e) NULL)
+  if (!is.null(fit_sd)) {
+    fc <- forecast::forecast(fit_sd, h = h, xreg = rep(0, h))
+    errors_cv[k, 9] <- actual_h1 - exp(fc$mean[1])
+  }
+  
+  if (!is.null(fit_t2)) {
+    fit_th <- tryCatch({
+      res_tb <- residuals(fit_t2)
+      res_tb_ts <- ts(as.numeric(res_tb), frequency = 5)
+      ar <- forecast::auto.arima(res_tb_ts, seasonal = TRUE,
+                                   stepwise = FALSE, approximation = FALSE)
+      fc_tb <- forecast::forecast(fit_t2, h = h)
+      fc_ar <- forecast::forecast(ar, h = h)
+      as.numeric(fc_tb$mean[1]) + as.numeric(fc_ar$mean[1])
+    }, error = function(e) NULL)
+    if (!is.null(fit_th)) {
+      errors_cv[k, 10] <- actual_h1 - fit_th
+    }
+  }
+  
+  if (!is.null(fit_e)) {
+    fit_eh <- tryCatch({
+      res_e <- residuals(fit_e)
+      res_e_ts <- ts(as.numeric(res_e), frequency = 5)
+      ar <- forecast::Arima(res_e_ts, order = c(0,0,4),
+                             seasonal = list(order = c(0,0,2), period = 5),
+                             fixed = c(0, NA, NA, NA, NA, NA),
+                             include.mean = FALSE)
+      fc_ets <- forecast::forecast(fit_e, h = h)
+      fc_ar  <- forecast::forecast(ar, h = h)
+      as.numeric(fc_ets$mean[1]) + as.numeric(fc_ar$mean[1])
+    }, error = function(e) NULL)
+    if (!is.null(fit_eh)) {
+      errors_cv[k, 11] <- actual_h1 - fit_eh
+    }
+  }
+  
+  if (k %% 5 == 0) cat("Fold", k, "/", n_folds, "selesai...\n")
+}
+
+naive_mae_train <- mean(abs(diff(y, lag = 11)))
+
+cv_summary <- data.frame(
+  Model    = model_names,
+  MAE_CV   = apply(errors_cv, 2, function(x) mean(abs(x), na.rm = TRUE)),
+  RMSE_CV  = apply(errors_cv, 2, function(x) sqrt(mean(x^2, na.rm = TRUE)))
+)
+cv_summary$MASE_CV <- round(cv_summary$MAE_CV / naive_mae_train, 3)
+cv_summary$RMSE_CV <- round(cv_summary$RMSE_CV, 3)
+cv_summary$MAE_CV  <- round(cv_summary$MAE_CV, 3)
+cv_summary <- cv_summary[order(cv_summary$MASE_CV), ]
+rownames(cv_summary) <- NULL
+
+kable(cv_summary, caption = "Perbandingan Kinerja Model Berdasarkan Cross-Validation")
+```
+
+# Plot
+```{r}
+annual <- data.frame(
+  Year    = c(as.numeric(time(train_data)), as.numeric(time(test_data))),
+  Sunspot = c(as.numeric(train_data), as.numeric(test_data))
+)
+
+yrs_test <- as.numeric(time(test_data))
+
+preds <- list(
+  "SARIMA (Model 6)"              = as.numeric(prediksi_asli),        
+  "SARIMA + dummy + iGARCH"       = as.numeric(pred_sarima_dummy),    
+  "ETS murni"                     = as.numeric(ramalan_ets$mean),
+  "ETS-ARIMA hybrid"              = as.numeric(pred_ets_hybrid),      
+  "TBATS (11 & 5.5) murni"        = as.numeric(ramalan_B$mean),
+  "TBATS-ARIMA hybrid"            = as.numeric(pred_tbats_hybrid),    
+  "Holt-Winters"                  = as.numeric(fc_hw$mean),
+  "Fourier K=2"                   = as.numeric(ramalan_fourier_k2$mean),
+  "Seasonal Naive"                = snaive_pred
+)
+
+long <- do.call(rbind, lapply(names(preds), function(nm)
+  data.frame(Year = yrs_test, Model = nm, Nilai = preds[[nm]])))
+
+dh <- subset(data.frame(Year = annual$Year, Nilai = annual$Sunspot), Year >= 1990)
+
+ggplot() +
+  geom_line(data = dh,   aes(Year, Nilai), linewidth = 1.1, color = "black") +
+  geom_line(data = long, aes(Year, Nilai, color = Model), linewidth = 0.8) +
+  geom_vline(xintercept = max(as.numeric(time(train_data))),
+             linetype = "dotted", color = "red") +
+  labs(title = "Prediksi semua model vs aktual",
+       x = "Tahun", y = "Sunspot") +
+  theme_minimal()
+```
+```{r}
+ggplot() +
+  geom_line(data = dh,   aes(Year, Nilai), linewidth = 1, color = "black") +
+  geom_line(data = long, aes(Year, Nilai, color = Model), linewidth = 0.8) +
+  geom_vline(xintercept = max(as.numeric(time(train_data))),
+             linetype = "dotted", color = "red") +
+  facet_wrap(~ Model, ncol = 3) +
+  labs(title = "Prediksi tiap model vs aktual (hitam)",
+       x = "Tahun", y = "Sunspot") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+# Plot Tiga Model
+```{r}
+annual <- data.frame(
+  Year    = c(as.numeric(time(train_data)), as.numeric(time(test_data))),
+  Sunspot = c(as.numeric(train_data), as.numeric(test_data))
+)
+
+yrs_test <- as.numeric(time(test_data))
+
+preds_3 <- list(
+  "SARIMA + dummy + iGARCH"  = as.numeric(pred_sarima_dummy),
+  "ETS-ARIMA hybrid"         = as.numeric(pred_ets_hybrid),
+  "Fourier K=2"              = as.numeric(ramalan_fourier_k2$mean)
+)
+
+long_3 <- do.call(rbind, lapply(names(preds_3), function(nm)
+  data.frame(Year = yrs_test, Model = nm, Nilai = preds_3[[nm]])))
+
+dh <- subset(data.frame(Year = annual$Year, Nilai = annual$Sunspot), Year >= 1990)
+
+ggplot() +
+  geom_line(data = dh,     aes(Year, Nilai), linewidth = 1.2, color = "black") +
+  geom_line(data = long_3, aes(Year, Nilai, color = Model), linewidth = 0.9) +
+  geom_vline(xintercept = max(as.numeric(time(train_data))),
+             linetype = "dotted", color = "red") +
+  labs(title    = "Perbandingan 3 Model dengan Asumsi Lengkap Terpenuhi",
+       subtitle = "Garis hitam = aktual; garis berwarna = prediksi",
+       x = "Tahun", y = "Sunspot", color = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+```{r}
+ggplot() +
+  geom_line(data = dh,     aes(Year, Nilai), linewidth = 1, color = "black") +
+  geom_line(data = long_3, aes(Year, Nilai, color = Model), linewidth = 0.9) +
+  geom_vline(xintercept = max(as.numeric(time(train_data))),
+             linetype = "dotted", color = "red") +
+  facet_wrap(~ Model, ncol = 1) +
+  labs(title = "Prediksi 3 Model Asumsi Lengkap vs Aktual",
+       x = "Tahun", y = "Sunspot") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+```{r}
+annual <- data.frame(
+  Year    = c(as.numeric(time(train_data)), as.numeric(time(test_data))),
+  Sunspot = c(as.numeric(train_data), as.numeric(test_data))
+)
+
+years_train <- as.numeric(time(train_data))   
+years_test  <- as.numeric(time(test_data))    
+
+
+fitted_sarima <- exp(as.numeric(fitted(model6_dummy)))
+
+fitted_ets_arima <- as.numeric(fitted(model_ets)) + 
+                    as.numeric(fitted(model_res_ets_v5))
+
+fitted_f2 <- as.numeric(fitted(model_fourier_k2))
+
+fc_sarima   <- as.numeric(pred_sarima_dummy)
+fc_ets_arm  <- as.numeric(pred_ets_hybrid)
+fc_f2       <- as.numeric(ramalan_fourier_k2$mean)
+
+long_fit <- rbind(
+  data.frame(Year = years_train, Model = "SARIMA + dummy + iGARCH",
+             Nilai = fitted_sarima,    Type = "Fitted"),
+  data.frame(Year = years_train, Model = "ETS-ARIMA hybrid",
+             Nilai = fitted_ets_arima, Type = "Fitted"),
+  data.frame(Year = years_train, Model = "Fourier K=2",
+             Nilai = fitted_f2,        Type = "Fitted")
+)
+
+long_fc <- rbind(
+  data.frame(Year = years_test, Model = "SARIMA + dummy + iGARCH",
+             Nilai = fc_sarima,  Type = "Forecast"),
+  data.frame(Year = years_test, Model = "ETS-ARIMA hybrid",
+             Nilai = fc_ets_arm, Type = "Forecast"),
+  data.frame(Year = years_test, Model = "Fourier K=2",
+             Nilai = fc_f2,      Type = "Forecast")
+)
+
+long_all <- rbind(long_fit, long_fc)
+
+ggplot() +
+  geom_line(data = annual, aes(Year, Sunspot),
+            linewidth = 1.1, color = "black", alpha = 0.75) +
+  geom_line(data = long_all,
+            aes(Year, Nilai, color = Model, linetype = Type),
+            linewidth = 0.8) +
+  geom_vline(xintercept = max(years_train),
+             linetype = "dotted", color = "red", linewidth = 0.8) +
+  facet_wrap(~ Model, ncol = 1) +
+  scale_linetype_manual(
+    values = c("Fitted" = "solid", "Forecast" = "dashed"),
+    labels = c("Fitted (in-sample 1926–2005)",
+               "Forecast (out-of-sample 2006–2025)")
+  ) +
+  scale_x_continuous(breaks = seq(1925, 2025, by = 10)) +
+  labs(
+    title    = "Perbandingan 3 Model Asumsi Lengkap (1926–2025)",
+    subtitle = "Garis hitam = aktual; solid = fitted in-sample; dashed = forecast out-of-sample; merah = batas training/testing",
+    x = "Tahun", y = "Sunspot",
+    color = NULL, linetype = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
