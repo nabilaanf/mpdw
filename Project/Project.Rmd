@@ -987,6 +987,45 @@ ci_upper_igarch  <- exp(mu_log + q975 * sigma_fc)
 
 # Perbandingan Data Training
 ```{r}
+aktual_train       <- as.numeric(train_data)
+naive_err_seasonal <- mean(abs(diff(aktual_train, lag = 11)))
+
+hitung_metrik <- function(pred, aktual, denom) {
+  valid <- !is.na(pred) & !is.na(aktual)
+  err   <- aktual[valid] - pred[valid]
+  c(RMSE = sqrt(mean(err^2)),
+    MAE  = mean(abs(err)),
+    MASE = mean(abs(err)) / denom)
+}
+
+fitted_sarima      <- exp(as.numeric(fitted(model6)))
+fitted_sarima_d    <- exp(as.numeric(fitted(model6_dummy)))
+fitted_ets         <- as.numeric(fitted(model_ets))
+fitted_ets_arima   <- as.numeric(fitted(model_ets)) + as.numeric(fitted(model_res_ets_v5))
+fitted_tbats_11    <- as.numeric(fitted(model_tbats))
+fitted_tbats_1155  <- as.numeric(fitted(model_tbats_coba))
+fitted_tbats_ar    <- as.numeric(fitted(model_tbats_coba)) + as.numeric(fitted(model_res_auto))
+fitted_f1          <- as.numeric(fitted(model_fourier_k1))
+fitted_f2          <- as.numeric(fitted(model_fourier_k2))
+
+fitted_hw          <- as.numeric(hw$fitted[, "xhat"])
+n_hw               <- length(fitted_hw)
+aktual_hw          <- aktual_train[(length(aktual_train) - n_hw + 1):length(aktual_train)]
+
+snaive_pred_train  <- c(rep(NA, 11), aktual_train[1:(length(aktual_train) - 11)])
+
+metrik_tr_sarima     <- hitung_metrik(fitted_sarima,     aktual_train, naive_err_seasonal)
+metrik_tr_sarima_d   <- hitung_metrik(fitted_sarima_d,   aktual_train, naive_err_seasonal)
+metrik_tr_ets        <- hitung_metrik(fitted_ets,        aktual_train, naive_err_seasonal)
+metrik_tr_ets_arima  <- hitung_metrik(fitted_ets_arima,  aktual_train, naive_err_seasonal)
+metrik_tr_tbats_11   <- hitung_metrik(fitted_tbats_11,   aktual_train, naive_err_seasonal)
+metrik_tr_tbats_1155 <- hitung_metrik(fitted_tbats_1155, aktual_train, naive_err_seasonal)
+metrik_tr_tbats_ar   <- hitung_metrik(fitted_tbats_ar,   aktual_train, naive_err_seasonal)
+metrik_tr_hw         <- hitung_metrik(fitted_hw,         aktual_hw,    naive_err_seasonal)
+metrik_tr_f1         <- hitung_metrik(fitted_f1,         aktual_train, naive_err_seasonal)
+metrik_tr_f2         <- hitung_metrik(fitted_f2,         aktual_train, naive_err_seasonal)
+metrik_tr_snaive     <- hitung_metrik(snaive_pred_train, aktual_train, naive_err_seasonal)
+
 tabel_train_metrics <- data.frame(
   Model = c(
     "SARIMA (tanpa dummy)",
@@ -1027,7 +1066,6 @@ rownames(tabel_train_metrics) <- NULL
 kable(tabel_train_metrics,
       caption = "Metrik In-Sample Fit pada Data Training (1937–2005)")
 ```
-
 ```{r}
 konst_jacob <- 2 * sum(log(as.numeric(train_data)))
 
@@ -1158,6 +1196,36 @@ kable(tabel_test, caption = "Perbandingan Metrik Peramalan pada Data Testing")
 
 # Perbandingan Diagnostik dan Signifikansi
 ```{r}
+ekstrak_diagnostik_tahunan <- function(model, nama) {
+  if (inherits(model, "Arima")) {
+    res <- residuals(model)
+  } else if (inherits(model, "tbats")) {
+    res <- residuals(model)
+  } else if (inherits(model, "ets")) {
+    res <- residuals(model)
+  } else if (inherits(model, "HoltWinters")) {
+    res <- residuals(model)
+  } else {
+    res <- residuals(model)
+  }
+  res <- as.numeric(res)
+  res <- res[!is.na(res)]
+  
+  lb      <- Box.test(res,   type = "Ljung", lag = 22)$p.value
+  shapiro <- shapiro.test(res)$p.value
+  arch    <- Box.test(res^2, type = "Ljung", lag = 22)$p.value
+  t_test  <- t.test(res, mu = 0)$p.value
+  
+  data.frame(
+    Model      = nama,
+    Total_Par  = length(coef(model)),
+    Signifikan = NA,
+    LB         = lb,
+    Shapiro    = shapiro,
+    ARCH       = arch,
+    T_Test     = t_test
+  )
+}
 res_std_igarch <- as.numeric(residuals(fit_igarch, standardize = TRUE))
 
 baris_final <- data.frame(
